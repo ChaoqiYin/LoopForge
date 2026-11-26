@@ -187,6 +187,31 @@ func (r *WorkManagementRepo) ManagementConnections() ([]domain.ManagementConnect
 	return out, nil
 }
 
+// DeleteManagementConnection removes one connection together with its field
+// and status mappings. Event inbox rows are kept as audit evidence.
+func (r *WorkManagementRepo) DeleteManagementConnection(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("连接 ID 不能为空")
+	}
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("connection_id = ?", id).Delete(&managementFieldMappingRow{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("connection_id = ?", id).Delete(&managementStatusMappingRow{}).Error; err != nil {
+			return err
+		}
+		result := tx.Where("id = ?", id).Delete(&managementConnectionRow{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+}
+
 // PutManagementFieldMappings replaces the field mapping of one (connection,
 // table) after validating the whole set.
 func (r *WorkManagementRepo) PutManagementFieldMappings(items []domain.ManagementFieldMapping) error {
