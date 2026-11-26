@@ -103,7 +103,7 @@ func (f *fakeBitableFeishu) openAPI(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"tenant-token","expire":7200}`))
 	case strings.HasSuffix(r.URL.Path, "/fields"):
 		items := []any{}
-		for _, name := range []string{"业务编号", "标题", "状态", "描述", "项目", "仓库", "外链"} {
+		for _, name := range []string{"业务编号", "标题", "状态", "描述", "负责人", "项目", "仓库", "外链"} {
 			items = append(items, map[string]any{"field_name": name, "field_id": "fld-" + name, "type": 1})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"items": items, "has_more": false}})
@@ -293,6 +293,7 @@ func (s *workManagementEventTestServer) configure(t *testing.T) string {
 	 {"field":"title","externalFieldName":"标题"},
 	 {"field":"status","externalFieldName":"状态"},
 	 {"field":"description","externalFieldName":"描述"},
+	 {"field":"assignee","externalFieldName":"负责人"},
 	 {"field":"project","externalFieldName":"项目"},
 	 {"field":"repository","externalFieldName":"仓库"},
 	 {"field":"external_url","externalFieldName":"外链"}
@@ -355,7 +356,7 @@ func TestWorkManagementRecordEventProjectsWorkItem(t *testing.T) {
 	s.configure(t)
 	s.fake.setRecord("rec-1", map[string]any{
 		"业务编号": "REQ-1", "标题": "修复登录", "状态": "开发中",
-		"描述": "登录页报错", "仓库": "org/repo", "外链": "https://example.com/req/1",
+		"描述": "登录页报错", "负责人": "张三", "仓库": "org/repo", "外链": "https://example.com/req/1",
 	})
 
 	s.fake.push(t, s.ws, recordChangedJSON("evt-1", "rec-1", "record_added",
@@ -373,7 +374,8 @@ func TestWorkManagementRecordEventProjectsWorkItem(t *testing.T) {
 		return true
 	})
 	if projected.Title != "修复登录" || projected.Description != "登录页报错" ||
-		projected.ProjectID != "platform" || projected.Kind != "requirement" {
+		projected.ProjectID != "platform" || projected.Kind != "requirement" ||
+		projected.ExternalAssignee != "张三" || projected.AcceptanceCriteria != "" {
 		t.Fatalf("projection = %+v", projected)
 	}
 	if projected.ExternalRef == nil || projected.ExternalRef.ExternalState != "开发中" ||

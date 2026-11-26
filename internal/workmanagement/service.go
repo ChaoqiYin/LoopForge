@@ -559,6 +559,7 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 	if value := strings.TrimSpace(record.AcceptanceCriteria); value != "" {
 		issue.AcceptanceCriteria = value
 	}
+	issue.ExternalAssignee = strings.TrimSpace(record.Assignee)
 	if repositoryID, ok := service.resolveRepository(record.Repository, projectID, issue); ok {
 		issue.RepositoryID = repositoryID
 		if len(issue.RepositoryIDs) == 0 {

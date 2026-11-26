@@ -52,9 +52,12 @@ type Issue struct {
 	Kind              string       `json:"kind,omitempty"` // requirement, issue
 	// AcceptanceCriteria is the externally managed acceptance snapshot used
 	// as Agent input. It is not a local editable requirement field.
-	AcceptanceCriteria string                  `json:"acceptanceCriteria,omitempty"`
-	Clarification      ClarificationAssessment `json:"clarification"`
-	Source             string                  `json:"source,omitempty"` // local, gongfeng, tapd
+	AcceptanceCriteria string `json:"acceptanceCriteria,omitempty"`
+	// ExternalAssignee is the display-only assignee reported by the external
+	// record. It is never mapped to a LoopForge user.
+	ExternalAssignee string                  `json:"externalAssignee,omitempty"`
+	Clarification    ClarificationAssessment `json:"clarification"`
+	Source           string                  `json:"source,omitempty"` // local, gongfeng, tapd
 	// TapdID is an optional metrics-only link for a platform-created requirement.
 	// It does not create a tracker binding or authorize TAPD write-back.
 	TapdID      string       `json:"tapdId,omitempty"`
