@@ -23,6 +23,7 @@ type ProjectionStore interface {
 	ManagementConnection(id string) (domain.ManagementConnection, bool)
 	PutManagementConnection(conn domain.ManagementConnection) error
 	ManagementFieldMappings(connectionID, tableID string) ([]domain.ManagementFieldMapping, error)
+	ManagementStatusMappings(connectionID, tableID string) ([]domain.ManagementStatusMapping, error)
 	PutManagementFieldMappings(items []domain.ManagementFieldMapping) error
 
 	RecordWorkManagementEvent(event domain.WorkManagementEvent) (bool, error)
@@ -53,6 +54,8 @@ type ServiceOptions struct {
 	// AckTimeout bounds the synchronous Event Inbox write inside the Feishu
 	// callback so the SDK acknowledges within three seconds.
 	AckTimeout time.Duration
+	// Execution receives status actions. Nil disables automatic actions.
+	Execution RunExecution
 }
 
 // Service owns event intake, the Event Inbox worker, Work Item projection and
@@ -62,6 +65,7 @@ type ServiceOptions struct {
 type Service struct {
 	adapter *FeishuAdapter
 	store   ProjectionStore
+	exec    RunExecution
 	now     func() time.Time
 	logger  func(format string, args ...any)
 
@@ -75,7 +79,10 @@ type Service struct {
 	// syncMu serializes reconciliation passes so two runs cannot regress the
 	// cursor or race their orphan detection.
 	syncMu sync.Mutex
-	wake   chan struct{}
+	// triggerMu serializes status action evaluation so an event and a
+	// reconciliation pass cannot both dispatch the same Work Item.
+	triggerMu sync.Mutex
+	wake      chan struct{}
 
 	startOnce sync.Once
 }
@@ -111,8 +118,12 @@ func NewService(adapter *FeishuAdapter, store ProjectionStore, opts ServiceOptio
 	if ackTimeout <= 0 {
 		ackTimeout = 2500 * time.Millisecond
 	}
+	exec := opts.Execution
+	if exec == nil {
+		exec = noopExecution{}
+	}
 	return &Service{
-		adapter: adapter, store: store, now: now, logger: logger,
+		adapter: adapter, store: store, exec: exec, now: now, logger: logger,
 		reconcileEvery: reconcileEvery, fullSyncEvery: fullEvery,
 		retryBase: retryBase, retryMax: retryMax, ackTimeout: ackTimeout,
 		wake: make(chan struct{}, 1),
@@ -455,7 +466,7 @@ func (s *Service) handleEvent(ctx context.Context, event domain.WorkManagementEv
 			}
 			return err
 		}
-		return s.projectExternalRecord(conn, record)
+		return s.projectExternalRecord(ctx, conn, record)
 	case domain.ManagementEventRecordDeleted:
 		return s.orphanExternalRecord(conn, event.RecordID)
 	case domain.ManagementEventFieldChanged:
@@ -481,7 +492,7 @@ func (s *Service) refreshFieldMappings(ctx context.Context, conn domain.Manageme
 // projectExternalRecord upserts one external record into the issues table by
 // (connection, table, business_key). Local execution fields are preserved;
 // only the projection and the external business status snapshot change.
-func (s *Service) projectExternalRecord(conn domain.ManagementConnection, record domain.ExternalRecord) error {
+func (s *Service) projectExternalRecord(ctx context.Context, conn domain.ManagementConnection, record domain.ExternalRecord) error {
 	businessKey := strings.TrimSpace(record.Ref.BusinessKey)
 	if businessKey == "" {
 		businessKey = strings.TrimSpace(record.Ref.RecordID)
@@ -491,47 +502,41 @@ func (s *Service) projectExternalRecord(conn domain.ManagementConnection, record
 		return errors.New("外部记录缺少业务编号和记录 ID")
 	}
 	projectID := s.resolveProject(conn, record.ProjectID)
-	ref := record.Ref
-	ref.Source = domain.ManagementPlatformFeishuBitable
-	ref.ExternalType = "record"
-	ref.ConnectionID = conn.ID
-	ref.TableID = conn.TableID
-	ref.BusinessKey = businessKey
-	ref.RecordID = firstNonEmpty(record.Ref.RecordID, businessKey)
-	ref.ExternalID = firstNonEmpty(record.Ref.ExternalID, ref.RecordID)
-	ref.ExternalURL = strings.TrimSpace(record.ExternalURL)
-	ref.ExternalState = strings.TrimSpace(record.ExternalStatus)
-	ref.Orphaned = false
-	ref.OrphanedAt = time.Time{}
-	ref.SyncedAt = s.now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	existing, found := s.store.IssueByExternalKey(conn.ID, conn.TableID, businessKey)
+	before := snapshotStatus(existing)
 	if !found {
 		issue := domain.Issue{
 			ID: workItemID(conn.ID, conn.TableID, businessKey), ProjectID: projectID,
 			Title: strings.TrimSpace(record.Title), Status: "backlog", Kind: "requirement",
-			Source: domain.ManagementPlatformFeishuBitable, ExternalRef: &ref,
+			Source: domain.ManagementPlatformFeishuBitable,
 		}
 		applyExternalRecord(&issue, conn, record, projectID, s.now(), s)
-		issue.AppendOperation(domain.IssueOperation{At: s.now(), Actor: "system", Action: "external_sync", Detail: "从飞书多维表格同步"})
+		issue.AppendOperation(domain.IssueOperation{At: s.now(), Actor: systemActor, Action: "external_sync", Detail: "从飞书多维表格同步"})
 		if err := s.store.PutIssue(issue); err != nil {
 			// A concurrent worker may have created the row already; fall back
 			// to the identity lookup and update it.
 			existing, found = s.store.IssueByExternalKey(conn.ID, conn.TableID, businessKey)
 			if !found {
+				s.mu.Unlock()
 				return err
 			}
+			before = snapshotStatus(existing)
 		} else {
-			return nil
+			s.mu.Unlock()
+			return s.afterProjection(ctx, conn, issue, before)
 		}
 	}
-	_, err := s.store.PatchIssue(existing.ID, func(issue *domain.Issue) error {
+	updated, err := s.store.PatchIssue(existing.ID, func(issue *domain.Issue) error {
 		applyExternalRecord(issue, conn, record, projectID, s.now(), s)
 		return nil
 	})
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if existing.ExternalRef != nil {
 		oldRecord := strings.TrimSpace(existing.ExternalRef.RecordID)
 		newRecord := firstNonEmpty(record.Ref.RecordID, businessKey)
@@ -542,7 +547,7 @@ func (s *Service) projectExternalRecord(conn domain.ManagementConnection, record
 			s.logger("work management: business key %s rebinds record %s -> %s", businessKey, oldRecord, newRecord)
 		}
 	}
-	return err
+	return s.afterProjection(ctx, conn, updated, before)
 }
 
 func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, record domain.ExternalRecord, projectID string, now time.Time, service *Service) {
@@ -578,9 +583,15 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 	}
 	previousState := ""
 	previousOrphaned := false
+	var statusHistory []string
+	writebackState := ""
+	var writebackAt time.Time
 	if issue.ExternalRef != nil {
 		previousState = issue.ExternalRef.ExternalState
 		previousOrphaned = issue.ExternalRef.Orphaned
+		statusHistory = append([]string(nil), issue.ExternalRef.StatusHistory...)
+		writebackState = issue.ExternalRef.WritebackState
+		writebackAt = issue.ExternalRef.WritebackAt
 	}
 	ref := record.Ref
 	ref.Source = domain.ManagementPlatformFeishuBitable
@@ -595,11 +606,17 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 	ref.Orphaned = false
 	ref.OrphanedAt = time.Time{}
 	ref.SyncedAt = now
+	ref.WritebackState = writebackState
+	ref.WritebackAt = writebackAt
+	if previousState != ref.ExternalState && ref.ExternalState != "" {
+		statusHistory = appendStatusHistory(statusHistory, ref.ExternalState)
+	}
+	ref.StatusHistory = statusHistory
 	issue.ExternalRef = &ref
 	issue.Source = domain.ManagementPlatformFeishuBitable
 	if previousState != ref.ExternalState || previousOrphaned {
 		issue.AppendOperation(domain.IssueOperation{
-			At: ref.SyncedAt, Actor: "system", Action: "external_status",
+			At: ref.SyncedAt, Actor: systemActor, Action: "external_status",
 			Detail: "外部业务状态：" + ref.ExternalState,
 		})
 	}
@@ -749,7 +766,7 @@ func (s *Service) SyncConnection(ctx context.Context, conn domain.ManagementConn
 			if !cutoff.IsZero() && !record.ModifiedAt.IsZero() && record.ModifiedAt.Before(cutoff) {
 				continue
 			}
-			if err := s.projectExternalRecord(conn, record); err != nil {
+			if err := s.projectExternalRecord(ctx, conn, record); err != nil {
 				return summary, err
 			}
 			summary.Projected++

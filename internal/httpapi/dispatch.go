@@ -18,7 +18,11 @@ type dispatchRequest struct {
 	IssueID, WorkflowID, ScheduleJobID, TriggerOrigin string
 	WorkspaceRunID                                    string
 	Rerun                                             bool
-	TriggerUserID                                     int64
+	// AllowRerun lets an automated (external status) trigger reuse an existing
+	// SOP task reservation instead of failing as "already ran". Explicit API
+	// reruns keep their stricter validation.
+	AllowRerun    bool
+	TriggerUserID int64
 	// ChatOrigin is the IM conversation the start was requested in; the
 	// run's progress goes back there.
 	ChatOrigin *domain.BotChatOrigin
@@ -110,14 +114,15 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		}
 	}
 	hasSameSOP := d.repo.IssueHasTaskForWorkflow(issue.ID, workflowID)
+	rerun := req.Rerun || (req.AllowRerun && hasSameSOP)
 	// A schedule only picks up untouched issues; another SOP lane is a human decision.
 	if scheduled && d.repo.IssueHasTask(issue.ID) {
 		return domain.Task{}, HTTPError{http.StatusConflict, "该需求已经跑过 SOP"}
 	}
-	if !scheduled && !req.Rerun && hasSameSOP {
+	if !scheduled && !rerun && hasSameSOP {
 		return domain.Task{}, HTTPError{http.StatusConflict, "该需求的这条 SOP 已经跑过，如需重新执行请明确选择重新运行"}
 	}
-	if req.Rerun && !hasSameSOP {
+	if req.Rerun && !hasSameSOP && !req.AllowRerun {
 		return domain.Task{}, HTTPError{http.StatusBadRequest, "该需求尚未运行这条 SOP，不能使用重新运行"}
 	}
 	repositoryIDs := issue.EffectiveRepositoryIDs()
@@ -157,6 +162,11 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 		repositories = append(repositories, rc)
 	}
 	input := issue.Title + "\n\n" + issue.Description
+	// Acceptance criteria is an external snapshot (Work Item), used as Agent
+	// input. It is never a local editable requirement field.
+	if criteria := strings.TrimSpace(issue.AcceptanceCriteria); criteria != "" {
+		input += "\n\n验收标准：\n" + criteria
+	}
 	if block := issue.IdentityBlock(); block != "" {
 		input += "\n\n" + block
 	}
@@ -192,7 +202,7 @@ func dispatchIssue(d *deps, req dispatchRequest) (domain.Task, error) {
 	if scheduled {
 		dispatchMode = "scheduled"
 	}
-	if req.Rerun {
+	if rerun {
 		taskID, dispatchMode = fmt.Sprintf("task-%d", time.Now().UnixNano()), "rerun"
 	}
 	triggerOrigin := strings.TrimSpace(req.TriggerOrigin)

@@ -166,6 +166,18 @@ func (a ManagementStatusAction) Valid() bool {
 	return false
 }
 
+// WorkItemPendingAction is a status action that arrived while the Work Item
+// already had an active Run. Only one action is kept: a newer status entry
+// replaces the previous deferred one because the external state is
+// authoritative.
+type WorkItemPendingAction struct {
+	Action          ManagementStatusAction `json:"action"`
+	ExternalStatus  string                 `json:"externalStatus"`
+	WorkflowID      string                 `json:"workflowId,omitempty"`
+	WritebackStatus string                 `json:"writebackStatus,omitempty"`
+	At              time.Time              `json:"at"`
+}
+
 // ManagementStatusMapping maps one external business status value to an
 // action. The key is (connection, table, external_status).
 type ManagementStatusMapping struct {
