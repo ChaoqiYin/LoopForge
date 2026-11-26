@@ -88,7 +88,11 @@ type ManagementFieldMapping struct {
 	Field             WorkItemField `json:"field"`
 	ExternalFieldName string        `json:"externalFieldName"`
 	ExternalFieldID   string        `json:"externalFieldId,omitempty"`
-	UpdatedAt         time.Time     `json:"updatedAt,omitempty"`
+	// ExternalFieldType caches the platform field type. A field_changed event
+	// compares it with the new resolution so a type change can pause automatic
+	// writeback instead of silently writing into a changed column.
+	ExternalFieldType string    `json:"externalFieldType,omitempty"`
+	UpdatedAt         time.Time `json:"updatedAt,omitempty"`
 }
 
 // Validate checks one mapping row.
@@ -187,7 +191,11 @@ type ManagementStatusMapping struct {
 	Action          ManagementStatusAction `json:"action"`
 	WorkflowID      string                 `json:"workflowId,omitempty"`
 	WritebackStatus string                 `json:"writebackStatus,omitempty"`
-	UpdatedAt       time.Time              `json:"updatedAt,omitempty"`
+	// AwaitingApproval marks the external status as a business-approval wait.
+	// The read-only approval center and the connection editor both read this
+	// switch; no status string matching is used. Old mappings default false.
+	AwaitingApproval bool      `json:"awaitingApproval,omitempty"`
+	UpdatedAt        time.Time `json:"updatedAt,omitempty"`
 }
 
 // Validate checks one status mapping row and the action's required fields.
@@ -233,19 +241,24 @@ type ManagementConnectionReadiness struct {
 // writeback switch, readiness and sync cursor. Field and status mappings are
 // stored separately and keyed by the same (connection, table).
 type ManagementConnection struct {
-	ID               string                        `json:"id"`
-	Name             string                        `json:"name"`
-	Platform         string                        `json:"platform"`
-	BotID            string                        `json:"botId,omitempty"`
-	BaseAppToken     string                        `json:"baseAppToken"`
-	TableID          string                        `json:"tableId"`
-	DefaultProjectID string                        `json:"defaultProjectId"`
-	AllowWriteback   bool                          `json:"allowWriteback"`
-	Enabled          bool                          `json:"enabled"`
-	Readiness        ManagementConnectionReadiness `json:"readiness,omitempty"`
-	SyncCursor       ManagementSyncCursor          `json:"syncCursor,omitempty"`
-	CreatedAt        time.Time                     `json:"createdAt"`
-	UpdatedAt        time.Time                     `json:"updatedAt"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Platform         string `json:"platform"`
+	BotID            string `json:"botId,omitempty"`
+	BaseAppToken     string `json:"baseAppToken"`
+	TableID          string `json:"tableId"`
+	DefaultProjectID string `json:"defaultProjectId"`
+	AllowWriteback   bool   `json:"allowWriteback"`
+	Enabled          bool   `json:"enabled"`
+	// WritebackPaused stops every automatic external write until an
+	// administrator re-saves the field mapping. A field type change or other
+	// data-shape drift sets it together with a visible readiness alert.
+	WritebackPaused       bool                          `json:"writebackPaused,omitempty"`
+	WritebackPausedReason string                        `json:"writebackPausedReason,omitempty"`
+	Readiness             ManagementConnectionReadiness `json:"readiness,omitempty"`
+	SyncCursor            ManagementSyncCursor          `json:"syncCursor,omitempty"`
+	CreatedAt             time.Time                     `json:"createdAt"`
+	UpdatedAt             time.Time                     `json:"updatedAt"`
 }
 
 // Validate checks the fields required to make a connection usable.
@@ -276,12 +289,16 @@ const (
 	ManagementEventRecordEdited  ManagementEventAction = "record_edited"
 	ManagementEventRecordDeleted ManagementEventAction = "record_deleted"
 	ManagementEventFieldChanged  ManagementEventAction = "field_changed"
+	// ManagementEventDeliverySummary is the delivery-summary writeback outbox.
+	// It is not an external record event: the payload carries a Delivery id.
+	ManagementEventDeliverySummary ManagementEventAction = "delivery_summary"
 )
 
 // Valid reports whether a is a supported event action.
 func (a ManagementEventAction) Valid() bool {
 	switch a {
-	case ManagementEventRecordAdded, ManagementEventRecordEdited, ManagementEventRecordDeleted, ManagementEventFieldChanged:
+	case ManagementEventRecordAdded, ManagementEventRecordEdited, ManagementEventRecordDeleted,
+		ManagementEventFieldChanged, ManagementEventDeliverySummary:
 		return true
 	}
 	return false
@@ -343,135 +360,6 @@ func (e WorkManagementEvent) Validate() error {
 	return nil
 }
 
-// Delivery check states. A check is optional until the SOP produces one.
-const (
-	DeliveryCheckPending = "pending"
-	DeliveryCheckPassed  = "passed"
-	DeliveryCheckFailed  = "failed"
-	DeliveryCheckSkipped = "skipped"
-)
-
-// DeliveryState is the final delivery lifecycle state.
-const (
-	DeliveryStateDraft     = "draft"
-	DeliveryStateRunning   = "running"
-	DeliveryStateSucceeded = "succeeded"
-	DeliveryStateFailed    = "failed"
-	DeliveryStateCancelled = "cancelled"
-)
-
-// DeliveryCheck records one verification dimension (test, review, approval).
-type DeliveryCheck struct {
-	State     string    `json:"state,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	URL       string    `json:"url,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt,omitempty"`
-}
-
-// ValidDeliveryCheckState reports whether state is a supported check state.
-func ValidDeliveryCheckState(state string) bool {
-	switch state {
-	case "", DeliveryCheckPending, DeliveryCheckPassed, DeliveryCheckFailed, DeliveryCheckSkipped:
-		return true
-	}
-	return false
-}
-
-// Delivery is one development delivery produced by LoopForge. It does not
-// depend on a PR/MR: ProviderMRURL is an optional provider detail.
-type Delivery struct {
-	ID             string        `json:"id"`
-	WorkItemID     string        `json:"workItemId"`
-	ProjectID      string        `json:"projectId"`
-	RepositoryID   string        `json:"repositoryId"`
-	RepositoryName string        `json:"repositoryName,omitempty"`
-	Branch         string        `json:"branch,omitempty"`
-	CommitSHA      string        `json:"commitSha,omitempty"`
-	ProviderMRURL  string        `json:"providerMrUrl,omitempty"`
-	Tests          DeliveryCheck `json:"tests,omitempty"`
-	Review         DeliveryCheck `json:"review,omitempty"`
-	Approval       DeliveryCheck `json:"approval,omitempty"`
-	State          string        `json:"state"`
-	CreatedAt      time.Time     `json:"createdAt,omitempty"`
-	UpdatedAt      time.Time     `json:"updatedAt,omitempty"`
-	CompletedAt    time.Time     `json:"completedAt,omitempty"`
-}
-
-// Validate checks the fields required to persist a delivery.
-func (d Delivery) Validate() error {
-	switch {
-	case strings.TrimSpace(d.ID) == "":
-		return fmt.Errorf("交付 ID 不能为空")
-	case strings.TrimSpace(d.WorkItemID) == "":
-		return fmt.Errorf("交付必须关联 Work Item")
-	case strings.TrimSpace(d.ProjectID) == "":
-		return fmt.Errorf("交付必须关联项目")
-	}
-	switch d.State {
-	case DeliveryStateDraft, DeliveryStateRunning, DeliveryStateSucceeded, DeliveryStateFailed, DeliveryStateCancelled:
-	default:
-		return fmt.Errorf("交付状态无效：%s", d.State)
-	}
-	for _, check := range []DeliveryCheck{d.Tests, d.Review, d.Approval} {
-		if !ValidDeliveryCheckState(check.State) {
-			return fmt.Errorf("交付检查状态无效：%s", check.State)
-		}
-	}
-	return nil
-}
-
-// Repository Git service credential kinds.
-const (
-	RepositoryGitCredentialSSH   = "ssh"
-	RepositoryGitCredentialHTTPS = "https"
-)
-
-// RepositoryGitCredential is the safe metadata of a repository-level service
-// credential. The secret is sealed with AES-GCM and never returned.
-type RepositoryGitCredential struct {
-	ID           string    `json:"id"`
-	RepositoryID string    `json:"repositoryId"`
-	Name         string    `json:"name"`
-	Kind         string    `json:"kind"`
-	Host         string    `json:"host"`
-	Username     string    `json:"username,omitempty"`
-	CreatedAt    time.Time `json:"createdAt,omitempty"`
-	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
-}
-
-// RepositoryGitCredentialInput carries a new or replacement secret.
-type RepositoryGitCredentialInput struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	Host     string `json:"host"`
-	Username string `json:"username,omitempty"`
-	Secret   string `json:"secret"`
-}
-
-// Validate checks a service credential before it is sealed.
-func (in RepositoryGitCredentialInput) Validate() error {
-	name := strings.TrimSpace(in.Name)
-	if count := len([]rune(name)); count < 1 || count > 80 {
-		return fmt.Errorf("请输入 1 到 80 个字符的凭据名称")
-	}
-	switch in.Kind {
-	case RepositoryGitCredentialSSH:
-	case RepositoryGitCredentialHTTPS:
-		if strings.TrimSpace(in.Username) == "" {
-			return fmt.Errorf("HTTPS 凭据必须填写用户名")
-		}
-	default:
-		return fmt.Errorf("请选择有效的仓库凭据类型")
-	}
-	if strings.TrimSpace(in.Host) == "" {
-		return fmt.Errorf("必须填写 Git 主机")
-	}
-	if strings.TrimSpace(in.Secret) == "" {
-		return fmt.Errorf("必须填写凭据内容")
-	}
-	return nil
-}
-
 // WorkItemEventType names the normalized internal event later tickets emit.
 type WorkItemEventType string
 
@@ -528,10 +416,21 @@ type ExternalDeliverySummary struct {
 	URL       string `json:"url,omitempty"`
 }
 
-// FormalWorkItem reports whether the Issue is bound to an External Record.
-// Only Formal Work Items enter formal dispatch and delivery statistics.
+// FormalWorkItem reports whether the Issue is bound to an External Record
+// through a Management Connection. A bare Source value (legacy Gongfeng/TAPD
+// compatibility rows) is not a formal binding: formal dispatch, Delivery and
+// statistics require the connection identity and an authoritative business
+// key. The projection degrades a missing business key to the record id, so a
+// bound row always carries one.
 func (i Issue) FormalWorkItem() bool {
-	return i.ExternalRef != nil && strings.TrimSpace(i.ExternalRef.Source) != ""
+	ref := i.ExternalRef
+	if ref == nil {
+		return false
+	}
+	if strings.TrimSpace(ref.ConnectionID) == "" || strings.TrimSpace(ref.TableID) == "" {
+		return false
+	}
+	return strings.TrimSpace(ref.BusinessKey) != ""
 }
 
 // ExternalBusinessStatus returns the read-only snapshot of the external

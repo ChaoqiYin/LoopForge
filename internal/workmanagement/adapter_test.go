@@ -23,6 +23,18 @@ func (fakeAdapter) ListWorkItems(context.Context, domain.ManagementConnection, s
 	return domain.ExternalRecordPage{}, nil
 }
 
+func (fakeAdapter) ReadRecordForProjection(context.Context, domain.ManagementConnection, string) (domain.ExternalRecord, error) {
+	return domain.ExternalRecord{}, nil
+}
+
+func (fakeAdapter) ListWorkItemsForProjection(context.Context, domain.ManagementConnection, string, int) (domain.ExternalRecordPage, error) {
+	return domain.ExternalRecordPage{}, nil
+}
+
+func (fakeAdapter) ResolveFieldMappings(context.Context, domain.ManagementConnection) ([]domain.ManagementFieldMapping, error) {
+	return nil, nil
+}
+
 func (fakeAdapter) UpdateExternalStatus(context.Context, domain.ManagementConnection, domain.ExternalRef, string) error {
 	return nil
 }
@@ -38,8 +50,9 @@ func (fakeAdapter) SubscribeEvents(context.Context, domain.ManagementConnection)
 // var _ asserts the fake satisfies the boundary at compile time.
 var _ Adapter = fakeAdapter{}
 
-// TestAdapterBoundary keeps the interface to the six approved operations. The
-// boundary explicitly excludes Business Approval and creating external records.
+// TestAdapterBoundary keeps the interface to the operations the service
+// actually depends on. The boundary explicitly excludes Business Approval and
+// creating external records.
 func TestAdapterBoundary(t *testing.T) {
 	var _ Adapter = fakeAdapter{}
 	typ := reflect.TypeOf((*Adapter)(nil)).Elem()
@@ -50,6 +63,9 @@ func TestAdapterBoundary(t *testing.T) {
 	want := []string{
 		"GetWorkItem",
 		"ListWorkItems",
+		"ListWorkItemsForProjection",
+		"ReadRecordForProjection",
+		"ResolveFieldMappings",
 		"SubscribeEvents",
 		"UpdateDeliverySummary",
 		"UpdateExternalStatus",

@@ -16,9 +16,10 @@ import (
 // Adapter is implemented once per management platform. Feishu Bitable is the
 // first implementation; tests drive it through a fake at the platform edge.
 //
-// GetWorkItem and ListWorkItems read authoritative records. UpdateExternalStatus
-// and UpdateDeliverySummary are the only write paths; they must record an
-// audit trail and let the caller suppress the resulting self-originated events.
+// The interface is the Service's dependency boundary: it covers the reads a
+// projection/reconciliation pass needs, the two explicit write paths, the
+// field-id cache refresh and event subscription. It deliberately excludes
+// Business Approval and creating external records.
 type Adapter interface {
 	// ValidateConnection checks credentials, base/table access and field
 	// visibility. A failed check returns a not-ready readiness, not a silent
@@ -28,6 +29,14 @@ type Adapter interface {
 	GetWorkItem(ctx context.Context, conn domain.ManagementConnection, ref domain.ExternalRef) (domain.ExternalRecord, error)
 	// ListWorkItems reads one page of External Records for reconciliation.
 	ListWorkItems(ctx context.Context, conn domain.ManagementConnection, cursor string, limit int) (domain.ExternalRecordPage, error)
+	// ReadRecordForProjection reads one record leniently: a missing business
+	// key or title degrades instead of aborting the projection.
+	ReadRecordForProjection(ctx context.Context, conn domain.ManagementConnection, recordID string) (domain.ExternalRecord, error)
+	// ListWorkItemsForProjection lists records leniently for reconciliation.
+	ListWorkItemsForProjection(ctx context.Context, conn domain.ManagementConnection, cursor string, limit int) (domain.ExternalRecordPage, error)
+	// ResolveFieldMappings refreshes the cached field id and type of each
+	// configured mapping.
+	ResolveFieldMappings(ctx context.Context, conn domain.ManagementConnection) ([]domain.ManagementFieldMapping, error)
 	// UpdateExternalStatus writes a derived external business status back.
 	UpdateExternalStatus(ctx context.Context, conn domain.ManagementConnection, ref domain.ExternalRef, status string) error
 	// UpdateDeliverySummary writes the delivery summary fields back.
@@ -36,3 +45,5 @@ type Adapter interface {
 	// and field change events.
 	SubscribeEvents(ctx context.Context, conn domain.ManagementConnection) error
 }
+
+var _ Adapter = (*FeishuAdapter)(nil)

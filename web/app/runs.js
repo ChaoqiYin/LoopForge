@@ -265,7 +265,7 @@ const RUN_FILTER_KEYS=['all','active','queued','paused','waiting','succeeded','f
 function runMatchesFilter(r,key){
   if(key==='all')return true;
   if(key==='active')return r.status==='running'&&!r.pauseRequested;
-  if(key==='paused')return Boolean(r.pauseRequested||r.status==='paused');
+  if(key==='paused')return Boolean(r.pauseRequested);
   if(key==='waiting')return runAwaitsConfirmation(r);
   return r.status===key;
 }
@@ -276,13 +276,13 @@ function hydrateRunIcons(root){
 function runIconSlot(name,size,cls=''){return `<span class="${cls}" data-run-icon="${name}" aria-hidden="true"><svg width="${size}" height="${size}"></svg></span>`}
 function runIdleCollaboration(r){return (r?.kind==='workspace'||runIsGroupMode(r))&&r?.status==='waiting'&&!r?.pauseRequested&&!runAwaitsConfirmation(r)}
 function runStatusTone(r){
-  if(r?.pauseRequested||r?.status==='paused')return 'warn';
+  if(r?.pauseRequested)return 'warn';
   if(runIdleCollaboration(r))return 'neutral';
   return ({running:'info',waiting:'warn',succeeded:'ok',failed:'err'}[r?.status])||'neutral';
 }
 const RUN_BADGE_TONES={info:'info',ok:'success',err:'error',warn:'warn',neutral:'neutral'};
 function runStatusBadgeHTML(r){
-  const paused=Boolean(r?.pauseRequested||r?.status==='paused');
+  const paused=Boolean(r?.pauseRequested);
   const [label,icon]=paused?['已暂停','pause']:runIdleCollaboration(r)?(r.kind==='workspace'?(runWorkspaceReclaimed(r)?['已回收','folder']:['工作区在线','chat']):['待指令','chat']):({queued:['排队中','clock'],running:['进行中',''],waiting:['待确认','user-hold'],succeeded:['已完成','check'],failed:['失败','alert'],cancelled:['已取消','close']}[r?.status])||[runStatus(r?.status),'circle'];
   const mark=icon?runIconSlot(icon,12,'hui-badge-glyph'):'<span class="hui-lamp" aria-hidden="true"><i></i></span>';
   return `<span class="hui-badge" data-size="sm" data-tone="${RUN_BADGE_TONES[runStatusTone(r)]}" data-status="${escapeHTML(runDisplayStatusClass(r))}" title="${escapeHTML(runDisplayStatus(r))}">${mark}${escapeHTML(label)}</span>`;
@@ -291,7 +291,7 @@ function runTriggerChip(task){const info=taskTriggerInfo(task);return `<span cla
 function runWorkspaceReclaimed(r){const at=String(r?.workspaceCleanedAt||'');return Boolean(at)&&!at.startsWith('0001-')}
 function runRowHTML(r,workflows){
   const p=runProgress(r),ctx=runContext(r),group=runIsGroupMode(r),sop=r.workflowSnapshot?.name||workflows.find(w=>w.id===r.workflowId)?.name||r.workflowId,title=ctx.issue?.title||sop||'自由协作';
-  const isPaused=Boolean(r.pauseRequested||r.status==='paused');
+  const isPaused=Boolean(r.pauseRequested);
   const isDeletable=r.status!=='queued'&&(!['running','waiting'].includes(r.status)||isPaused);
   const sep='<span class="run-sep">·</span>';
   const meta=group?`<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`:`${ctx.issue?`<span class="run-ref">${escapeHTML(ctx.project?.key||'ISS')}-${escapeHTML(ctx.issue.number)}</span>${sep}`:''}<span class="run-meta-sop">${escapeHTML(sop)}</span>${sep}<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`;
@@ -411,7 +411,7 @@ function runHeaderDescription(input, title, expanded) {
     <summary><span class="run-header-copy">${escapeHTML(text)}</span><span class="run-description-more">展开全文</span><span class="run-description-less">收起全文</span></summary>
   </details>`;
 }
-function runStatus(s){return ({queued:'排队中',running:'运行中',waiting:'待确认',paused:'已暂停',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[s]||s)}
+function runStatus(s){return ({queued:'排队中',running:'运行中',waiting:'待确认',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[s]||s)}
 function runControlSignature(r){return `${r?.status||''}:${Boolean(r?.pauseRequested)}:${Boolean(r?.cancelRequested)}:${r?.admissionState||''}`}
 function runControlToast(run,message){return run?.status==='queued'?'已进入项目排队，获得名额后自动启动':run?.status==='running'?message:`当前状态：${runDisplayStatus(run)}`}
 async function syncRunControlState(runId){
@@ -423,10 +423,10 @@ async function syncRunControlState(runId){
   paintRunControl(runId);
   return run;
 }
-function runDisplayStatus(r){return (r?.pauseRequested||r?.status==='paused')?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
+function runDisplayStatus(r){return r?.pauseRequested?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
 // Only SOP waiting states require confirmation; workspaces and retired groups do not.
 function runAwaitsConfirmation(r){return r?.kind!=='workspace'&&!runIsGroupMode(r)&&r?.status==='waiting'&&!r?.pauseRequested}
-function runDisplayStatusClass(r){return (r?.pauseRequested||r?.status==='paused')?'paused':(r?.status||'')}
+function runDisplayStatusClass(r){return r?.pauseRequested?'paused':(r?.status||'')}
 function formatTokens(n){n=Number(n||0);if(n>=1000000)return `${(n/1000000).toFixed(n<10000000?1:0)}M`;return n>999?`${(n/1000).toFixed(n>9999?0:1)}k`:String(n)}
 function compactTelemetry(events){const out=[];for(const e of events||[]){const last=out[out.length-1];if(last&&last.nodeId===e.nodeId&&last.category===e.category&&last.name===e.name&&['reasoning','output'].includes(e.category)){last.message=(last.message||'')+(e.message||'');last.sequence=e.sequence;last.timestamp=e.timestamp}else out.push({...e})}return out}
 function toolInputHint(input){

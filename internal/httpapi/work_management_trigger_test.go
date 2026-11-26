@@ -302,14 +302,19 @@ func TestWorkManagementWritebackIsExplicitAndDoesNotLoop(t *testing.T) {
 		map[string]any{"field_id": "fld-业务编号", "field_value": `"REQ-1"`})
 
 	var issue domain.Issue
-	s.waitFor(t, "optimistic writeback snapshot", func() bool {
+	s.waitFor(t, "writeback marker without optimistic status", func() bool {
 		found, ok := s.issueByBusinessKey(t, "REQ-1")
 		if !ok {
 			return false
 		}
 		issue = found
-		return found.ExternalRef != nil && found.ExternalRef.ExternalState == "进行中"
+		return found.ExternalRef != nil && found.ExternalRef.WritebackState == "进行中"
 	})
+	// ExternalState is a read-only authoritative snapshot: the writeback must
+	// not advance it. Only a read-back of the external record may do that.
+	if issue.ExternalRef.ExternalState != "开发中" {
+		t.Fatalf("writeback optimistically changed ExternalState: %+v", issue.ExternalRef)
+	}
 	assertSystemAudit(t, issue, "external_writeback")
 
 	req, ok := s.fake.lastRequest("batch_update")
@@ -338,6 +343,9 @@ func TestWorkManagementWritebackIsExplicitAndDoesNotLoop(t *testing.T) {
 	stored, _ := s.issueByBusinessKey(t, "REQ-1")
 	if count := operationCount(stored, "external_action"); count != 0 {
 		t.Fatalf("self writeback event executed %d actions", count)
+	}
+	if stored.ExternalRef == nil || stored.ExternalRef.ExternalState != "进行中" {
+		t.Fatalf("read-back did not update the authoritative snapshot: %+v", stored.ExternalRef)
 	}
 }
 

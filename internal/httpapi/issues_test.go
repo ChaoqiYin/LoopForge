@@ -1468,7 +1468,7 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue := domain.Issue{ID: "gf-existing", ProjectID: "platform", Kind: "issue", Source: "feishu_bitable", Title: "unclear bug", WorkflowID: wf.ID,
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "gf-existing"}}
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "gf-existing", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "gf-existing"}}
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
@@ -1512,7 +1512,7 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue := domain.Issue{ID: "tapd-rated", ProjectID: "platform", Kind: "requirement", Source: "feishu_bitable", Title: "partial req", WorkflowID: wf.ID,
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "tapd-rated"}}
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "tapd-rated", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "tapd-rated"}}
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}

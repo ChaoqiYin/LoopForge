@@ -78,6 +78,14 @@ const (
 	operationStatusRollback   = "external_status_rollback"
 	operationWriteback        = "external_writeback"
 	operationWritebackIgnored = "external_writeback_observed"
+	// operationBusinessKeyMissing and operationBusinessKeyConflict are the
+	// visible, queryable alerts for identity problems. They complement logs.
+	operationBusinessKeyMissing  = "external_business_key_missing"
+	operationBusinessKeyConflict = "external_business_key_conflict"
+	// operationDeliveryWriteback is the audit entry for a delivery summary
+	// writeback (created/skipped/failed).
+	operationDeliveryWriteback = "external_delivery_writeback"
+	operationDeliverySkipped   = "external_delivery_writeback_skipped"
 )
 
 // systemActor is the audit actor for every automated external transition.

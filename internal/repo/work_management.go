@@ -39,6 +39,7 @@ type managementFieldMappingRow struct {
 	Field             string     `gorm:"column:field;size:64;uniqueIndex:uq_management_field,priority:3"`
 	ExternalFieldName string     `gorm:"column:external_field_name;size:255"`
 	ExternalFieldID   string     `gorm:"column:external_field_id;size:255"`
+	ExternalFieldType string     `gorm:"column:external_field_type;size:32"`
 	Created           *time.Time `gorm:"column:created_at"`
 	Updated           *time.Time `gorm:"column:updated_at"`
 }
@@ -46,15 +47,16 @@ type managementFieldMappingRow struct {
 func (managementFieldMappingRow) TableName() string { return "management_field_mappings" }
 
 type managementStatusMappingRow struct {
-	ID              string     `gorm:"column:id;primaryKey;size:191"`
-	ConnectionID    string     `gorm:"column:connection_id;size:64;uniqueIndex:uq_management_status,priority:1"`
-	TableID         string     `gorm:"column:table_id;size:128;uniqueIndex:uq_management_status,priority:2"`
-	ExternalStatus  string     `gorm:"column:external_status;size:255;uniqueIndex:uq_management_status,priority:3"`
-	Action          string     `gorm:"column:action;size:32"`
-	WorkflowID      string     `gorm:"column:workflow_id;size:64"`
-	WritebackStatus string     `gorm:"column:writeback_status;size:255"`
-	Created         *time.Time `gorm:"column:created_at"`
-	Updated         *time.Time `gorm:"column:updated_at"`
+	ID               string     `gorm:"column:id;primaryKey;size:191"`
+	ConnectionID     string     `gorm:"column:connection_id;size:64;uniqueIndex:uq_management_status,priority:1"`
+	TableID          string     `gorm:"column:table_id;size:128;uniqueIndex:uq_management_status,priority:2"`
+	ExternalStatus   string     `gorm:"column:external_status;size:255;uniqueIndex:uq_management_status,priority:3"`
+	Action           string     `gorm:"column:action;size:32"`
+	WorkflowID       string     `gorm:"column:workflow_id;size:64"`
+	WritebackStatus  string     `gorm:"column:writeback_status;size:255"`
+	AwaitingApproval bool       `gorm:"column:awaiting_approval"`
+	Created          *time.Time `gorm:"column:created_at"`
+	Updated          *time.Time `gorm:"column:updated_at"`
 }
 
 func (managementStatusMappingRow) TableName() string { return "management_status_mappings" }
@@ -109,7 +111,8 @@ func (row managementFieldMappingRow) toDomain() domain.ManagementFieldMapping {
 	return domain.ManagementFieldMapping{
 		ConnectionID: row.ConnectionID, TableID: row.TableID, Field: domain.WorkItemField(row.Field),
 		ExternalFieldName: row.ExternalFieldName, ExternalFieldID: row.ExternalFieldID,
-		UpdatedAt: utcValue(row.Updated),
+		ExternalFieldType: row.ExternalFieldType,
+		UpdatedAt:         utcValue(row.Updated),
 	}
 }
 
@@ -117,7 +120,8 @@ func (row managementStatusMappingRow) toDomain() domain.ManagementStatusMapping 
 	return domain.ManagementStatusMapping{
 		ConnectionID: row.ConnectionID, TableID: row.TableID, ExternalStatus: row.ExternalStatus,
 		Action: domain.ManagementStatusAction(row.Action), WorkflowID: row.WorkflowID,
-		WritebackStatus: row.WritebackStatus, UpdatedAt: utcValue(row.Updated),
+		WritebackStatus: row.WritebackStatus, AwaitingApproval: row.AwaitingApproval,
+		UpdatedAt: utcValue(row.Updated),
 	}
 }
 
@@ -231,7 +235,8 @@ func (r *WorkManagementRepo) PutManagementFieldMappings(items []domain.Managemen
 				ID:           managementMappingID("fm", connectionID, tableID, string(item.Field)),
 				ConnectionID: item.ConnectionID, TableID: item.TableID, Field: string(item.Field),
 				ExternalFieldName: strings.TrimSpace(item.ExternalFieldName), ExternalFieldID: strings.TrimSpace(item.ExternalFieldID),
-				Created: timePtr(now), Updated: timePtr(now),
+				ExternalFieldType: strings.TrimSpace(item.ExternalFieldType),
+				Created:           timePtr(now), Updated: timePtr(now),
 			}
 			if err := tx.Create(&row).Error; err != nil {
 				return err
@@ -287,8 +292,9 @@ func (r *WorkManagementRepo) PutManagementStatusMappings(items []domain.Manageme
 				ID:           managementMappingID("sm", connectionID, tableID, strings.TrimSpace(item.ExternalStatus)),
 				ConnectionID: connectionID, TableID: tableID, ExternalStatus: strings.TrimSpace(item.ExternalStatus),
 				Action: string(item.Action), WorkflowID: strings.TrimSpace(item.WorkflowID),
-				WritebackStatus: strings.TrimSpace(item.WritebackStatus),
-				Created:         timePtr(now), Updated: timePtr(now),
+				WritebackStatus:  strings.TrimSpace(item.WritebackStatus),
+				AwaitingApproval: item.AwaitingApproval,
+				Created:          timePtr(now), Updated: timePtr(now),
 			}
 			if err := tx.Create(&row).Error; err != nil {
 				return err

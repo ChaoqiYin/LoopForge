@@ -34,6 +34,7 @@ type fakeBitableFeishu struct {
 	mu             sync.Mutex
 	records        map[string]map[string]any
 	searchItems    []map[string]any
+	fieldTypes     map[string]int
 	subscribeCalls int
 	batchGetCalls  int
 	searchCalls    int
@@ -57,7 +58,7 @@ type fakeBitableRequest struct {
 func newFakeBitableFeishu(t *testing.T) *fakeBitableFeishu {
 	t.Helper()
 	f := &fakeBitableFeishu{
-		t: t, records: map[string]map[string]any{},
+		t: t, records: map[string]map[string]any{}, fieldTypes: map[string]int{},
 		conns: make(chan *websocket.Conn, 4), acks: make(chan int, 32), closed: make(chan struct{}, 4),
 	}
 	mux := http.NewServeMux()
@@ -107,6 +108,14 @@ func (f *fakeBitableFeishu) setSearch(items []map[string]any) {
 	f.searchItems = append([]map[string]any(nil), items...)
 }
 
+// setFieldType changes the platform type of one Bitable field so a
+// field_changed event can simulate a schema change.
+func (f *fakeBitableFeishu) setFieldType(name string, fieldType int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fieldTypes[name] = fieldType
+}
+
 func (f *fakeBitableFeishu) openAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Body != nil {
@@ -123,8 +132,18 @@ func (f *fakeBitableFeishu) openAPI(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"tenant-token","expire":7200}`))
 	case strings.HasSuffix(r.URL.Path, "/fields"):
 		items := []any{}
+		f.mu.Lock()
+		types := map[string]int{}
+		for name, fieldType := range f.fieldTypes {
+			types[name] = fieldType
+		}
+		f.mu.Unlock()
 		for _, name := range []string{"业务编号", "标题", "状态", "描述", "验收标准", "负责人", "项目", "仓库", "外链"} {
-			items = append(items, map[string]any{"field_name": name, "field_id": "fld-" + name, "type": 1})
+			fieldType := 1
+			if configured, ok := types[name]; ok {
+				fieldType = configured
+			}
+			items = append(items, map[string]any{"field_name": name, "field_id": "fld-" + name, "type": fieldType})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"items": items, "has_more": false}})
 	case strings.Contains(r.URL.Path, "/records/batch_get"):
@@ -551,6 +570,10 @@ func TestWorkManagementBusinessKeyConflictRebindsRecord(t *testing.T) {
 	if count := s.workItemCount(t); count != 1 {
 		t.Fatalf("business key conflict created %d work items", count)
 	}
+	issue, _ := s.issueByBusinessKey(t, "REQ-1")
+	if operationCount(issue, "external_business_key_conflict") == 0 {
+		t.Fatalf("business key conflict is not a visible alert: %+v", issue.Operations)
+	}
 }
 
 func TestWorkManagementFormulaFieldIsReadBack(t *testing.T) {
@@ -624,6 +647,78 @@ func TestWorkManagementMissingBusinessKeyDegradesWithAlert(t *testing.T) {
 		issue, ok := s.issueByBusinessKey(t, "rec-9")
 		return ok && issue.ExternalRef != nil && issue.ExternalRef.RecordID == "rec-9"
 	})
+	issue, _ := s.issueByBusinessKey(t, "rec-9")
+	if !issue.ExternalRef.BusinessKeyDegraded {
+		t.Fatalf("missing business key is not visible on the projection: %+v", issue.ExternalRef)
+	}
+	if operationCount(issue, "external_business_key_missing") == 0 {
+		t.Fatalf("missing business key produced no visible audit alert: %+v", issue.Operations)
+	}
+}
+
+func TestWorkManagementAwaitingApprovalComesFromStatusMapping(t *testing.T) {
+	s := newWorkManagementEventTestServer(t)
+	connectionID := s.configure(t)
+	mappings := `{"statusMappings":[
+	 {"externalStatus":"待审批","action":"ignore","awaitingApproval":true},
+	 {"externalStatus":"开发中","action":"ignore"}
+	]}`
+	if rec := s.request(t, http.MethodPut, "/api/work-management/connections/"+connectionID+"/status-mappings", mappings); rec.Code != http.StatusOK {
+		t.Fatalf("status mappings = %d %s", rec.Code, rec.Body.String())
+	}
+	s.fake.setRecord("rec-1", map[string]any{"业务编号": "REQ-1", "标题": "等审批", "状态": "待审批"})
+	s.fake.push(t, s.ws, recordChangedJSON("evt-1", "rec-1", "record_added",
+		map[string]any{"field_id": "fld-业务编号", "field_value": `"REQ-1"`}))
+	if code := s.fake.waitAck(t, 3*time.Second); code != http.StatusOK {
+		t.Fatalf("ack = %d", code)
+	}
+	s.waitFor(t, "awaiting approval projection", func() bool {
+		issue, ok := s.issueByBusinessKey(t, "REQ-1")
+		return ok && issue.ExternalRef != nil && issue.ExternalRef.AwaitingApproval
+	})
+
+	// The marker follows the new status mapping, so it is not sticky.
+	s.fake.setRecord("rec-1", map[string]any{"业务编号": "REQ-1", "标题": "开发中", "状态": "开发中"})
+	s.fake.push(t, s.ws, recordChangedJSON("evt-2", "rec-1", "record_edited",
+		map[string]any{"field_id": "fld-状态", "field_value": `"开发中"`}))
+	if code := s.fake.waitAck(t, 3*time.Second); code != http.StatusOK {
+		t.Fatalf("edit ack = %d", code)
+	}
+	s.waitFor(t, "approval marker cleared", func() bool {
+		issue, ok := s.issueByBusinessKey(t, "REQ-1")
+		return ok && issue.ExternalRef != nil && issue.ExternalRef.ExternalState == "开发中" && !issue.ExternalRef.AwaitingApproval
+	})
+}
+
+func TestWorkManagementFieldTypeChangePausesWritebackWithVisibleAlert(t *testing.T) {
+	s := newWorkManagementEventTestServer(t)
+	connectionID := s.configure(t)
+	// The mapping cache stores the initial type (text, 1). The platform
+	// changes the status column to single select (3).
+	s.fake.setFieldType("状态", 3)
+	s.fake.push(t, s.ws, fieldChangedJSON("evt-field-type"))
+	if code := s.fake.waitAck(t, 3*time.Second); code != http.StatusOK {
+		t.Fatalf("field changed ack = %d", code)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rec := s.request(t, http.MethodGet, "/api/work-management/connections/"+connectionID, "")
+		if rec.Code == http.StatusOK {
+			body := decodeWorkManagementResponse(t, rec)
+			conn, _ := body["connection"].(map[string]any)
+			paused, _ := conn["writebackPaused"].(bool)
+			readiness, _ := conn["readiness"].(map[string]any)
+			state, _ := readiness["state"].(string)
+			message, _ := readiness["message"].(string)
+			if paused && state == domain.ManagementReadinessNotReady && strings.Contains(message, "字段类型") {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("field type change did not pause writeback with a visible alert")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func TestWorkManagementConnectionSubscribesFile(t *testing.T) {

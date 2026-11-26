@@ -27,14 +27,24 @@ func TestWorkManagementConnectionAndMappings(t *testing.T) {
 	if !ok || got.Name != conn.Name || got.BaseAppToken != conn.BaseAppToken || got.TableID != conn.TableID || !got.Enabled {
 		t.Fatalf("connection round trip = %+v, ok=%v", got, ok)
 	}
+	// A writeback pause and its visible reason survive the payload round trip.
+	conn.WritebackPaused = true
+	conn.WritebackPausedReason = "字段类型已变更"
+	if err := s.PutManagementConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.ManagementConnection("conn-1")
+	if !got.WritebackPaused || got.WritebackPausedReason != "字段类型已变更" {
+		t.Fatalf("writeback pause round trip = %+v", got)
+	}
 	if list, err := s.ManagementConnections(); err != nil || len(list) != 1 || list[0].ID != "conn-1" {
 		t.Fatalf("connections = %+v, %v", list, err)
 	}
 
 	mappings := []domain.ManagementFieldMapping{
-		{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldBusinessKey, ExternalFieldName: "业务编号", ExternalFieldID: "fld-1"},
-		{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldTitle, ExternalFieldName: "标题", ExternalFieldID: "fld-2"},
-		{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldStatus, ExternalFieldName: "状态", ExternalFieldID: "fld-3"},
+		{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldBusinessKey, ExternalFieldName: "业务编号", ExternalFieldID: "fld-1", ExternalFieldType: "1"},
+		{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldTitle, ExternalFieldName: "标题", ExternalFieldID: "fld-2", ExternalFieldType: "1"},
+		{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldStatus, ExternalFieldName: "状态", ExternalFieldID: "fld-3", ExternalFieldType: "3"},
 	}
 	if err := s.PutManagementFieldMappings(mappings); err != nil {
 		t.Fatal(err)
@@ -56,6 +66,11 @@ func TestWorkManagementConnectionAndMappings(t *testing.T) {
 	if stored[0].ExternalFieldName != "需求编号" || stored[0].ExternalFieldID != "fld-9" {
 		t.Fatalf("field mapping not replaced: %+v", stored[0])
 	}
+	for _, item := range stored {
+		if item.Field == domain.WorkItemFieldStatus && item.ExternalFieldType != "3" {
+			t.Fatalf("field type not cached: %+v", item)
+		}
+	}
 	// Invalid mapping sets are rejected before any write.
 	invalid := []domain.ManagementFieldMapping{{ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldTitle, ExternalFieldName: "标题"}}
 	if err := s.PutManagementFieldMappings(invalid); err == nil {
@@ -63,7 +78,7 @@ func TestWorkManagementConnectionAndMappings(t *testing.T) {
 	}
 
 	statuses := []domain.ManagementStatusMapping{
-		{ConnectionID: "conn-1", TableID: "tbl-1", ExternalStatus: "开发中", Action: domain.ManagementActionStartSOP, WorkflowID: "sop-1"},
+		{ConnectionID: "conn-1", TableID: "tbl-1", ExternalStatus: "开发中", Action: domain.ManagementActionStartSOP, WorkflowID: "sop-1", AwaitingApproval: true},
 		{ConnectionID: "conn-1", TableID: "tbl-1", ExternalStatus: "草稿", Action: domain.ManagementActionIgnore},
 	}
 	if err := s.PutManagementStatusMappings(statuses); err != nil {
@@ -72,6 +87,14 @@ func TestWorkManagementConnectionAndMappings(t *testing.T) {
 	storedStatuses, err := s.ManagementStatusMappings("conn-1", "tbl-1")
 	if err != nil || len(storedStatuses) != 2 {
 		t.Fatalf("status mappings = %+v, %v", storedStatuses, err)
+	}
+	for _, item := range storedStatuses {
+		if item.ExternalStatus == "开发中" && !item.AwaitingApproval {
+			t.Fatalf("awaiting-approval marker lost: %+v", item)
+		}
+		if item.ExternalStatus == "草稿" && item.AwaitingApproval {
+			t.Fatalf("awaiting-approval must default false: %+v", item)
+		}
 	}
 	statuses[1].Action = domain.ManagementActionPause
 	if err := s.PutManagementStatusMappings(statuses); err != nil {

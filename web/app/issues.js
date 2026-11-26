@@ -131,12 +131,14 @@ function workItemSourceTone(i){
 }
 function executionStatusLabel(run){
   if(!run)return '尚未执行';
-  if(run.pauseRequested||run.status==='paused')return '已暂停';
-  return ({queued:'排队中',running:'正在执行',waiting:'等待门禁',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[run.status])||run.status||'—';
+  // Run status vocabulary is shared with runs.js. There is no paused Run
+  // status (ADR 0002): pause is pauseRequested with the Run kept at waiting.
+  if(run.pauseRequested)return '已暂停';
+  return runStatus(run.status)||'—';
 }
 function executionStatusTone(run,workflow){
   if(!run)return 'neutral';
-  if(run.pauseRequested||run.status==='paused')return 'warn';
+  if(run.pauseRequested)return 'warn';
   if(run.status==='waiting')return 'warn';
   if(run.status==='failed')return 'error';
   if(run.status==='succeeded')return 'success';
@@ -154,7 +156,7 @@ function executionMatchesStatusFilter(i,filter){
     case 'not_started':return !run;
     case 'active':return !!run&&['queued','running'].includes(run.status);
     case 'waiting':return !!run&&run.status==='waiting'||stage.key==='waiting';
-    case 'paused':return !!run&&(run.pauseRequested||run.status==='paused');
+    case 'paused':return !!run&&run.pauseRequested;
     case 'succeeded':return !!run&&run.status==='succeeded';
     case 'failed':return !!run&&run.status==='failed';
     case 'cancelled':return !!run&&run.status==='cancelled';

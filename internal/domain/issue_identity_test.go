@@ -40,3 +40,26 @@ func TestIssueIdentityBlockLocal(t *testing.T) {
 		t.Fatalf("local identity:\n%s", got)
 	}
 }
+
+func TestIssueIdentityBlockFeishuNeverLooksLocal(t *testing.T) {
+	for _, issue := range []Issue{
+		{ID: "wi-1", Source: "feishu_bitable", ExternalRef: &ExternalRef{
+			Source: "feishu_bitable", ExternalID: "rec-1", BusinessKey: "REQ-1",
+			ConnectionID: "conn-1", TableID: "tbl-1",
+		}},
+		// The projection always sets Issue.Source, but the ExternalRef fallback
+		// keeps an Agent prompt correct even for a partially migrated row.
+		{ID: "wi-2", ExternalRef: &ExternalRef{
+			Source: "feishu_bitable", ExternalID: "rec-2", BusinessKey: "REQ-2",
+			ConnectionID: "conn-1", TableID: "tbl-1",
+		}},
+	} {
+		got := issue.IdentityBlock()
+		if !strings.Contains(got, "来源：飞书多维表格") {
+			t.Fatalf("feishu identity block:\n%s", got)
+		}
+		if strings.Contains(got, "来源：本地") {
+			t.Fatalf("synced work item must never look local:\n%s", got)
+		}
+	}
+}

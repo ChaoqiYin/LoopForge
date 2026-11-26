@@ -39,7 +39,7 @@ func TestConversationLifecycle(t *testing.T) {
 	if err := s.PutIssue(domain.Issue{
 		ID: "space-linked-issue", ProjectID: "platform", Title: "积分商城兑换改版", Number: 7,
 		Description: "兑换流程从 4 步缩到 2 步", Status: "todo", Priority: "high", Kind: "issue", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-space-linked"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-space-linked", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-space-linked"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 	}, http.StatusBadRequest)
 	if err := s.PutIssue(domain.Issue{
 		ID: "iss-work-item", ProjectID: "platform", Title: "缓存击穿治理", Status: "todo", Kind: "issue", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-work-item"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-work-item", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-work-item"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 	// From the requirements page: an issue without a conversation gets one.
 	if err := s.PutIssue(domain.Issue{
 		ID: "iss-page", ProjectID: "platform", Title: "导出改异步", Status: "todo", Kind: "issue", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-iss-page"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-iss-page", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-iss-page"},
 	}); err != nil {
 		t.Fatal(err)
 	}

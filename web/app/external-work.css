@@ -79,7 +79,9 @@
 #repositoriesView .wm-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 #systemConfigView .wm-switches { display: grid; gap: 10px; margin: 2px 0 0; }
 #systemConfigView .wm-switch { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--hui-border-soft); border-radius: 9px; background: var(--hui-canvas); }
-#systemConfigView .wm-switch input { width: 34px; height: 20px; margin: 1px 0 0; accent-color: var(--hui-accent); flex: none; }
+/* The switch itself uses the shared Harness Switch (.hui-switch); only the
+ * row layout belongs to this panel. */
+#systemConfigView .wm-switch .hui-switch { margin-top: 1px; flex: none; }
 #systemConfigView .wm-switch span { display: grid; gap: 2px; }
 #systemConfigView .wm-switch b { font: 500 13px/1.35 var(--hui-sans); color: var(--hui-text); }
 #systemConfigView .wm-switch small { font-size: 12px; line-height: 1.45; color: var(--hui-muted); }
@@ -101,7 +103,8 @@
 #repositoriesView .wm-notice b { display: block; color: var(--hui-text); font: 500 13px/1.4 var(--hui-sans); }
 #systemConfigView .wm-notice p,
 #repositoriesView .wm-notice p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; }
-#systemConfigView .wm-status-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(130px, .8fr) auto; gap: 10px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--hui-border-soft); }
+#systemConfigView .wm-status-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(130px, .8fr) minmax(118px, .7fr) auto; gap: 10px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--hui-border-soft); }
+#systemConfigView .wm-awaiting .hui-switch { align-self: end; margin-bottom: 8px; }
 #systemConfigView .wm-status-row:last-of-type { border-bottom: 0; }
 #systemConfigView .wm-remove { align-self: end; margin-bottom: 1px; color: var(--hui-error); border-color: color-mix(in srgb, var(--hui-error) 26%, var(--hui-border)); }
 

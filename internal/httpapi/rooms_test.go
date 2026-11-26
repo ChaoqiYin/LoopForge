@@ -30,7 +30,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "room-generic-issue", ProjectID: "platform", Title: "用通用模板跑", Status: "todo", WorkflowID: "room-generic", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-generic"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-generic", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-room-generic"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,13 +77,13 @@ func TestRoomDispatchesSOPOnSyncedWorkItem(t *testing.T) {
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "room-synced-issue", ProjectID: "platform", Title: "按 SOP 交付", Status: "todo", WorkflowID: "room-sop", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-synced"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-synced", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-room-synced"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "room-multi-issue", ProjectID: "platform", Title: "两条流程并行", Status: "todo", WorkflowID: "room-sop", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-multi"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-multi", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-room-multi"},
 	}); err != nil {
 		t.Fatal(err)
 	}

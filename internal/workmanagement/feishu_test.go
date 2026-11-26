@@ -135,6 +135,25 @@ func (f *fakeFeishu) setDefault(key string, body any) {
 	f.defaults[key] = body
 }
 
+// setFieldType rewrites the numeric type of one field in the scripted field
+// list, so a field_changed test can simulate a type change.
+func (f *fakeFeishu) setFieldType(name string, fieldType int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	body, _ := f.defaults["fields"].(map[string]any)
+	data, _ := body["data"].(map[string]any)
+	items, _ := data["items"].([]any)
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item == nil {
+			continue
+		}
+		if item["field_name"] == name {
+			item["type"] = fieldType
+		}
+	}
+}
+
 func (f *fakeFeishu) callCount(key string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -229,6 +248,43 @@ func newTestAdapter(t *testing.T, fake *fakeFeishu, mappings *fakeMappingSource,
 		fn(&opts)
 	}
 	return NewFeishuAdapter(opts), sleeper
+}
+
+func TestFeishuWritebackPausedAfterFieldTypeChange(t *testing.T) {
+	fake := newFakeFeishu(t)
+	adapter, _ := newTestAdapter(t, fake, &fakeMappingSource{fields: standardMappings()}, func(o *AdapterOptions) {
+		o.DeliveryFieldNames = map[string]string{"branch": "交付分支"}
+	})
+	conn := testConnection()
+	conn.WritebackPaused = true
+	conn.WritebackPausedReason = "状态（1 → 3）"
+
+	if err := adapter.UpdateExternalStatus(context.Background(), conn, domain.ExternalRef{RecordID: "rec-1"}, "已完成"); !errors.Is(err, ErrWritebackPaused) {
+		t.Fatalf("status writeback err = %v", err)
+	}
+	if err := adapter.UpdateDeliverySummary(context.Background(), conn, domain.ExternalRef{RecordID: "rec-1"}, domain.ExternalDeliverySummary{Branch: "x"}); !errors.Is(err, ErrWritebackPaused) {
+		t.Fatalf("delivery writeback err = %v", err)
+	}
+	if fake.callCount("batch_update") != 0 {
+		t.Fatalf("paused writeback still called Feishu: %+v", fake.calls)
+	}
+}
+
+func TestFeishuValidateConnectionResolvesFieldTypes(t *testing.T) {
+	fake := newFakeFeishu(t)
+	fake.setDefault("fields", fakeFields("业务编号", "标题", "状态", "描述"))
+	fake.setFieldType("状态", 3)
+	adapter, _ := newTestAdapter(t, fake, &fakeMappingSource{fields: standardMappings()[:3]})
+
+	_, resolved, err := adapter.ValidateAndResolve(context.Background(), testConnection())
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	for _, item := range resolved {
+		if item.Field == domain.WorkItemFieldStatus && item.ExternalFieldType != "3" {
+			t.Fatalf("field type not resolved: %+v", item)
+		}
+	}
 }
 
 func TestFeishuValidateConnectionResolvesFieldIDs(t *testing.T) {
@@ -671,7 +727,7 @@ func TestFeishuReadRecordForProjectionDegradesMissingIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read for projection: %v", err)
 	}
-	if record.Ref.BusinessKey != "rec-7" || record.Ref.RecordID != "rec-7" || record.Title != "rec-7" {
+	if record.Ref.BusinessKey != "" || record.Ref.RecordID != "rec-7" || record.Title != "rec-7" {
 		t.Fatalf("degraded record = %+v", record)
 	}
 	if record.Description != "公式结果" || record.ExternalStatus != "草稿" {

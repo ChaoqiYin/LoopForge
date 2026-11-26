@@ -18,7 +18,7 @@ func TestIssueRouteLifecycleBranches(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	issue := domain.Issue{
 		ID: "cvb-issue", ProjectID: "platform", Title: "Coverage issue", Status: "todo", Kind: "requirement", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-issue"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-issue", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-issue"},
 	}
 	if err := f.s.PutIssue(issue); err != nil {
 		t.Fatal(err)
@@ -373,13 +373,13 @@ func TestIssuesMoreRouteBranches(t *testing.T) {
 	valid := domain.Issue{
 		ID: "cvb-more-route", ProjectID: "platform", Title: "route", Status: "backlog",
 		Kind: "requirement", Source: "feishu_bitable",
-		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-more-route"},
+		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-more-route", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-more-route"},
 		Clarification: domain.ClarificationAssessment{StartedAt: time.Now().UTC().Add(-time.Minute)},
 	}
 	orphan := domain.Issue{ID: "cvb-more-orphan", ProjectID: "missing", Title: "orphan", Kind: "requirement"}
 	retry := domain.Issue{
 		ID: "cvb-more-retry", ProjectID: "platform", Title: "retry", Kind: "requirement", Source: "feishu_bitable",
-		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-more-retry"},
+		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-more-retry", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-more-retry"},
 		Clarification: domain.ClarificationAssessment{Summary: "saved summary", WriteBackStatus: "failed"},
 	}
 	if err := f.s.PutIssue(valid); err != nil {
@@ -453,12 +453,8 @@ func TestIssuesMoreTrackerCreateAndResync(t *testing.T) {
 	rec := cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"summary": "tracker clarification", "ready": true,
 	}, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tracker clarification = %d: %s", rec.Code, rec.Body.String())
-	}
-	rec = cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{"retry": true}, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tracker write-back retry = %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("legacy TAPD compatibility row must not clarify: %d: %s", rec.Code, rec.Body.String())
 	}
 	rec = cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/resync-tapd", nil, true)
 	if rec.Code != http.StatusOK {
@@ -508,7 +504,7 @@ func TestIssuesMoreForcedPersistenceError(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	issue := domain.Issue{
 		ID: "cvb-more-write-error", ProjectID: "platform", Title: "write error", Kind: "requirement",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-write-error"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-write-error", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-write-error"},
 	}
 	if err := f.s.PutIssue(issue); err != nil {
 		t.Fatal(err)

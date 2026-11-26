@@ -117,8 +117,8 @@ function renderSystemConfigPage() {
         </div>
         <label class="wm-field"><span>默认项目</span><select name="defaultProjectId">${wmProjectOptions(conn.defaultProjectId)}</select></label>
         <div class="wm-switches">
-          <label class="wm-switch"><input type="checkbox" name="enabled" role="switch"${conn.enabled === false ? '' : ' checked'}><span><b>启用连接</b><small>停用后不再触发执行，也不允许立即同步</small></span></label>
-          <label class="wm-switch"><input type="checkbox" name="allowWriteback" role="switch"${conn.allowWriteback ? ' checked' : ''}><span><b>允许回写外部状态</b><small>默认关闭；只有状态映射显式声明回写时才写入外部平台</small></span></label>
+          <label class="wm-switch"><input type="checkbox" class="hui-switch" name="enabled" role="switch"${conn.enabled === false ? '' : ' checked'}><span><b>启用连接</b><small>停用后不再触发执行，也不允许立即同步</small></span></label>
+          <label class="wm-switch"><input type="checkbox" class="hui-switch" name="allowWriteback" role="switch"${conn.allowWriteback ? ' checked' : ''}><span><b>允许回写外部状态</b><small>默认关闭；只有状态映射显式声明回写时才写入外部平台</small></span></label>
         </div>
         <div class="wm-actions">
           <button type="button" class="button primary" data-wm-save>保存连接</button>
@@ -169,6 +169,7 @@ function wmStatusRow(row = {}, index = 0) {
     <label class="wm-field"><span>动作</span><select name="action">${WM_STATUS_ACTIONS.map(([value, label]) => `<option value="${value}"${action === value ? ' selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label>
     <label class="wm-field" data-status-workflow><span>启动 SOP</span><select name="workflowId">${wmWorkflowOptions(row.workflowId)}</select></label>
     <label class="wm-field" data-status-writeback><span>回写状态</span><input name="writebackStatus" value="${escapeHTML(row.writebackStatus || '')}" placeholder="例如：已排期"></label>
+    <label class="wm-field wm-awaiting"><span>等待业务审批</span><input type="checkbox" class="hui-switch" name="awaitingApproval" role="switch"${row.awaitingApproval ? ' checked' : ''} aria-label="该外部状态表示等待业务审批"></label>
     <button type="button" class="button ghost small wm-remove" data-wm-remove-status="${index}" aria-label="删除状态映射">${wmIcon('trash', 14)}删除</button>
   </div>`;
 }
@@ -317,6 +318,7 @@ function wmCollectStatuses() {
       tableId: connection.tableId || '',
       externalStatus: row.querySelector('[name="externalStatus"]')?.value.trim() || '',
       action: row.querySelector('[name="action"]')?.value || 'ignore',
+      awaitingApproval: !!row.querySelector('[name="awaitingApproval"]')?.checked,
     };
     const workflow = row.querySelector('[name="workflowId"]')?.value;
     if (workflow && (rowData.action === 'start_sop' || rowData.action === 'restart')) rowData.workflowId = workflow;

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/gitwork"
 )
 
 // hydrateRepositoryServiceGitCredentials merges repository-level service
@@ -32,42 +33,31 @@ func (h *runnersHandlers) hydrateRepositoryServiceGitCredentials(task *domain.Ru
 		if err != nil || secret == "" {
 			continue
 		}
-		switch credential.Kind {
-		case domain.RepositoryGitCredentialHTTPS:
+		overlay, ok := gitwork.BuildServiceCredentialOverlay(credential, secret, item.CloneURL)
+		if !ok {
+			continue
+		}
+		switch {
+		case overlay.HTTP != nil:
 			if !runner.SupportsGitHTTP() {
 				continue
 			}
-			endpoint, err := domain.ParseGitHTTPEndpoint(credential.Host)
-			if err != nil {
-				continue
-			}
-			if strings.HasPrefix(endpoint.Scope(), "http://") && !runner.SupportsGitPlainHTTP() {
+			if strings.HasPrefix(overlay.HTTP.Host, "http://") && !runner.SupportsGitPlainHTTP() {
 				continue
 			}
 			if task.Invocation.GitHTTPCredentials == nil {
 				task.Invocation.GitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{}
 			}
-			host := endpoint.Scope()
-			platform := domain.GitPlatformOther
-			if strings.EqualFold(endpoint.Hostname(), "github.com") {
-				platform = domain.GitPlatformGitHub
-			}
-			task.Invocation.GitHTTPCredentials[host] = domain.GitHTTPExecutionCredential{
-				GitHTTPCredential: domain.GitHTTPCredential{
-					ID: credential.ID, Name: credential.Name, Platform: platform,
-					Host: host, Username: credential.Username,
-				},
-				Token: secret,
-			}
+			task.Invocation.GitHTTPCredentials[overlay.HTTP.Host] = *overlay.HTTP
 			changed = true
-		case domain.RepositoryGitCredentialSSH:
+		case overlay.SSH:
 			if !runner.SupportsGitSSH() || !item.UseSSH || strings.TrimSpace(item.CloneURL) == "" {
 				continue
 			}
 			if task.Invocation.GitSSHKeys == nil {
 				task.Invocation.GitSSHKeys = map[string]string{}
 			}
-			task.Invocation.GitSSHKeys[item.CloneURL] = secret
+			task.Invocation.GitSSHKeys[overlay.SSHURL] = overlay.SSHKey
 			changed = true
 		}
 	}
