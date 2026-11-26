@@ -131,29 +131,6 @@ func TestDeletingConversationSettlesItsRequirements(t *testing.T) {
 
 // The creating conversation decides whether deleting a conversation deletes a
 // requirement, so the issue API neither sets nor moves it.
-func TestIssueSaveKeepsConversationSessionServerOwned(t *testing.T) {
-	h, _ := workbenchFixture(t)
-	h.deps.engine = engine.New(h.repo, runtime.NewManager(t.TempDir()))
-	api := New(h.repo, h.deps.engine, tracker.NewService(), "", "")
-	created := requestJSON[domain.Issue](t, api, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "workbench", "title": "手工需求", "conversationSessionId": "chat-forged",
-	}, http.StatusOK)
-	if stored, _ := h.repo.Issue(created.ID); stored.ConversationSessionID != "" {
-		t.Fatalf("new issue conversation = %q, want none", stored.ConversationSessionID)
-	}
-	if err := h.repo.PutIssue(domain.Issue{ID: "issue-chat", ProjectID: "workbench", Title: "对话需求", Kind: "requirement", Source: "local", Status: "in_progress", ConversationSessionID: "chat-own"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, forged := range []string{"chat-forged", ""} {
-		requestJSON[domain.Issue](t, api, http.MethodPut, "/api/issues", map[string]any{
-			"id": "issue-chat", "title": "改了标题", "conversationSessionId": forged,
-		}, http.StatusOK)
-		if stored, _ := h.repo.Issue("issue-chat"); stored.ConversationSessionID != "chat-own" || stored.Title != "改了标题" {
-			t.Fatalf("after saving %q: conversation = %q title = %q", forged, stored.ConversationSessionID, stored.Title)
-		}
-	}
-}
-
 func TestConversationIssueDelivered(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

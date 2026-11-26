@@ -431,60 +431,6 @@ func TestChatClarificationTimers(t *testing.T) {
 
 // A requirement confirmed and started from a group remembers the group, so
 // the run's progress is sent back there.
-func TestDraftStartedFromGroupRecordsTheChat(t *testing.T) {
-	s, h, bot, _, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
-	member, _ := s.User(43)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}}); err != nil {
-		t.Fatal(err)
-	}
-	project, _ := s.Project("p")
-	project.WorkflowID = "wf-dev"
-	s.PutProject(project)
-	item := domain.BotInteraction{ID: "group-ask", BotID: bot.ID, SenderID: "new-wecom-user", Content: "帮我建个需求"}
-	if _, err := s.EnqueueBotInteraction(item, "group", "oc_team"); err != nil {
-		t.Fatal(err)
-	}
-	stored, _ := s.BotInteraction(item.ID)
-	conv, _ := s.BotConversation(stored.ConversationID)
-	reply, err := h.generateBotReply(context.Background(), bot, conv, nil, stored)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := botDraftLink.FindStringSubmatch(reply)
-	if m == nil {
-		t.Fatalf("no draft: %q", reply)
-	}
-	if code, out := draftChoice(t, h, member, m[1], `{"choices":[{"index":0,"workflowId":"","start":true}]}`); code != 200 || out["status"] != repo.BotDraftExecuted {
-		t.Fatalf("confirm = %d %v", code, out)
-	}
-	issueID, ok := s.LatestBotChatIssue(conv.ID)
-	if !ok {
-		t.Fatal("requirement origin not recorded")
-	}
-	var runID string
-	for _, task := range s.Tasks() {
-		if task.IssueID == issueID {
-			runID = task.RunID
-		}
-	}
-	if runID == "" {
-		t.Skip("dispatch did not report a run in this environment")
-	}
-	origin, ok := s.BotRunOrigin(runID)
-	if !ok || origin.ChatType != "group" || origin.ChatID != "oc_team" || origin.SenderID != "new-wecom-user" || origin.ConfigID != bot.ID {
-		t.Fatalf("run origin = %+v %v", origin, ok)
-	}
-	if run, _ := s.RunState(runID); run.ExecutionContext.BotOriginID != repo.BotIssueOriginID(conv.ID, issueID) {
-		t.Fatalf("run start origin = %q", run.ExecutionContext.BotOriginID)
-	}
-}
-
-// Edge paths: requirement references, quoted cards, a failed round and its
-// retry, an interrupted analysis rerun by the timer, status lines, the end
-// while analyzing, and saving a tracker requirement with "保存并启动".
 func TestChatClarificationEdgePaths(t *testing.T) {
 	f := newClarifyChatFixture(t, domain.BotChannelFeishu)
 	if text := botClarifyText("@_user_1 @机器人 澄清 LOOP-7"); text != "澄清 LOOP-7" {

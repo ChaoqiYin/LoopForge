@@ -119,95 +119,6 @@ func TestDispatchTAPDIssuePutsStoryIdentityInInput(t *testing.T) {
 	}
 }
 
-func TestCreateIssueDefaultsAssigneeToCurrentUser(t *testing.T) {
-	t.Setenv("AGENTFLOW_SESSION_SECRET", "create-assignee-session-secret")
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	creator := domain.User{ID: 88, LoginName: "creator", ChineseName: "建单人"}
-	if err := s.PutUser(creator); err != nil {
-		t.Fatal(err)
-	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	created := requestJSONAuthed[domain.Issue](t, h, creator, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "新人需求", "kind": "requirement",
-	}, http.StatusOK)
-	if created.AssigneeUserID != 88 {
-		t.Fatalf("assignee=%d want creator 88, not owner", created.AssigneeUserID)
-	}
-}
-
-func TestPlatformRequirementOptionalTapdMetricBinding(t *testing.T) {
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	issue := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "平台需求", "kind": "requirement", "syncTarget": "local",
-	}, http.StatusOK)
-	if issue.Source != "local" || issue.TapdID != "" || issue.ExternalRef != nil {
-		t.Fatalf("unbound platform demand: %+v", issue)
-	}
-	bound := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": issue.ID, "projectId": "platform", "title": issue.Title, "tapdId": " 1001 ",
-	}, http.StatusOK)
-	if bound.Source != "local" || bound.TapdID != "1001" || bound.ExternalRef != nil || bound.RequirementTAPDID() != "1001" {
-		t.Fatalf("manual binding changed tracker identity: %+v", bound)
-	}
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/sync/create", map[string]any{
-		"issueId": issue.ID, "target": "tapd",
-	}, http.StatusConflict)
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/sync/create", map[string]any{
-		"issueId": issue.ID, "target": "gongfeng",
-	}, http.StatusConflict)
-	preserved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": issue.ID, "projectId": "platform", "title": issue.Title,
-	}, http.StatusOK)
-	if preserved.TapdID != "1001" {
-		t.Fatalf("unrelated update cleared TAPD ID: %+v", preserved)
-	}
-	cleared := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": issue.ID, "projectId": "platform", "title": issue.Title, "tapdId": "",
-	}, http.StatusOK)
-	if cleared.TapdID != "" || cleared.Source != "local" {
-		t.Fatalf("explicit clear failed: %+v", cleared)
-	}
-	requestJSON[map[string]any](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": issue.ID, "projectId": "platform", "title": issue.Title, "tapdId": "not-a-number",
-	}, http.StatusBadRequest)
-}
-
-func TestIssueClarificationStartPersistsAcrossEdit(t *testing.T) {
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	started := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
-	issue := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "澄清后开发", "kind": "requirement", "syncTarget": "local",
-		"clarification": map[string]any{"startedAt": started.Format(time.RFC3339)},
-	}, http.StatusOK)
-	if !issue.Clarification.StartedAt.Equal(started) {
-		t.Fatalf("clarification start not saved: %+v", issue.Clarification)
-	}
-	updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": issue.ID, "projectId": "platform", "title": "澄清后开发（修改）",
-	}, http.StatusOK)
-	if !updated.Clarification.StartedAt.Equal(started) {
-		t.Fatalf("unrelated edit erased clarification start: %+v", updated.Clarification)
-	}
-	requestJSON[map[string]any](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": issue.ID, "projectId": "platform", "title": issue.Title,
-		"clarification": map[string]any{"startedAt": time.Now().UTC().Add(time.Hour).Format(time.RFC3339)},
-	}, http.StatusBadRequest)
-}
-
 func TestIssueDispatchUsesTriggerUserCredentials(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "dispatch-trigger-session-secret")
 	root := t.TempDir()
@@ -421,9 +332,14 @@ func TestRequirementInheritsProjectPlaybook(t *testing.T) {
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
-	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", domain.Issue{
-		ProjectID: "playbook", Kind: "requirement", Title: "Inherit playbook", Status: "todo", AssigneeUserID: 3,
-	}, http.StatusOK)
+	issuer := issuesHandlers{deps: &deps{repo: s}}
+	issue := domain.Issue{ID: "inherit-playbook", ProjectID: "playbook", Kind: "requirement", Title: "Inherit playbook", Status: "todo", AssigneeUserID: 3,
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "inherit"}}
+	issuer.bindRequirementPlaybook(&issue)
+	if err := s.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	created, _ := s.Issue(issue.ID)
 	if created.WorkflowID != product.ID {
 		t.Fatalf("new issue workflow=%q want first playbook step", created.WorkflowID)
 	}
@@ -476,9 +392,14 @@ func TestRequirementPicksNamedPlaybook(t *testing.T) {
 	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
-	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", domain.Issue{
-		ProjectID: "combos", Kind: "requirement", Title: "Backend only", Status: "todo", AssigneeUserID: 3, PlaybookID: "be",
-	}, http.StatusOK)
+	issuer := issuesHandlers{deps: &deps{repo: s}}
+	comboIssue := domain.Issue{ID: "named-playbook", ProjectID: "combos", Kind: "requirement", Title: "Backend only", Status: "todo", AssigneeUserID: 3, PlaybookID: "be",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "named"}}
+	issuer.bindRequirementPlaybook(&comboIssue)
+	if err := s.PutIssue(comboIssue); err != nil {
+		t.Fatal(err)
+	}
+	created, _ := s.Issue(comboIssue.ID)
 	if created.PlaybookID != "be" {
 		t.Fatalf("playbookId=%q", created.PlaybookID)
 	}
@@ -741,7 +662,7 @@ func TestRepositoryBindingIsValidatedAndFrozenAtDispatch(t *testing.T) {
 	if err := s.PutProject(domain.Project{ID: "other", Key: "OTHER", Name: "Other"}); err != nil {
 		t.Fatal(err)
 	}
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues", map[string]any{"projectId": "other", "title": "Wrong repo", "repositoryId": repo.ID}, http.StatusBadRequest)
+	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues", map[string]any{"projectId": "other", "title": "Wrong repo", "repositoryId": repo.ID}, http.StatusMethodNotAllowed)
 }
 
 func TestSecurityHeadersAndSameOriginCORS(t *testing.T) {
@@ -1546,7 +1467,8 @@ func TestExistingIssueClarificationDoesNotStartOrBlockSOP(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	issue := domain.Issue{ID: "gf-existing", ProjectID: "platform", Kind: "issue", Source: "gongfeng", Title: "unclear bug", WorkflowID: wf.ID}
+	issue := domain.Issue{ID: "gf-existing", ProjectID: "platform", Kind: "issue", Source: "feishu_bitable", Title: "unclear bug", WorkflowID: wf.ID,
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "gf-existing"}}
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
@@ -1589,7 +1511,8 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 	if err := s.PutWorkflow(wf); err != nil {
 		t.Fatal(err)
 	}
-	issue := domain.Issue{ID: "tapd-rated", ProjectID: "platform", Kind: "requirement", Source: "tapd", Title: "partial req", WorkflowID: wf.ID}
+	issue := domain.Issue{ID: "tapd-rated", ProjectID: "platform", Kind: "requirement", Source: "feishu_bitable", Title: "partial req", WorkflowID: wf.ID,
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "tapd-rated"}}
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
@@ -1611,37 +1534,6 @@ func TestRequirementClarificationFinishesWithoutScore(t *testing.T) {
 	t.Cleanup(func() { _ = e.Cancel(task.RunID) })
 }
 
-func TestCreateLocalIssueWithoutSyncTarget(t *testing.T) {
-	root := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
-	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "local only", "description": "用户自己写的描述",
-	}, http.StatusOK)
-	if created.Source != "local" || created.Kind != "requirement" || created.Title != "local only" {
-		t.Fatalf("local issue: %+v", created)
-	}
-	if created.ExternalRef != nil {
-		t.Fatalf("local issue must not bind tracker: %+v", created.ExternalRef)
-	}
-	if created.Clarification.Gated {
-		t.Fatalf("direct local create must not intake-score: %+v", created.Clarification)
-	}
-	imported := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "from gongfeng", "source": "gongfeng",
-		"externalRef": map[string]any{"source": "gongfeng", "externalId": "99", "externalIid": 18},
-	}, http.StatusOK)
-	if imported.Source != "gongfeng" || imported.ExternalRef == nil || imported.ExternalRef.ExternalIID != 18 {
-		t.Fatalf("imported issue: %+v", imported)
-	}
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "push me", "syncTarget": "gongfeng"}, http.StatusBadRequest)
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad dest", "syncTarget": "jira"}, http.StatusBadRequest)
-}
-
 func TestPushLocalIssueToTAPDKeepsDescription(t *testing.T) {
 	root := t.TempDir()
 	s, err := repo.OpenTest()
@@ -1653,11 +1545,13 @@ func TestPushLocalIssueToTAPDKeepsDescription(t *testing.T) {
 		t.Fatal("seed owner missing")
 	}
 	h := newTAPDImportHandler(t, s, root, `{"id":"1010000000888888888","name":"本地推送","status":"open"}`)
-	local := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId":   "platform",
-		"title":       "直接创建的需求",
-		"description": "用户自己写的完整描述，不需要平台再分析。",
-	}, http.StatusOK)
+	if err := s.PutIssue(domain.Issue{
+		ID: "local-push", ProjectID: "platform", Title: "直接创建的需求",
+		Description: "用户自己写的完整描述，不需要平台再分析。", Source: "local", Kind: "requirement", Status: "backlog",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	local, _ := s.Issue("local-push")
 	if local.Source != "local" || local.Clarification.Gated {
 		t.Fatalf("local create: %+v", local)
 	}
@@ -1739,178 +1633,6 @@ func TestImportTAPDIssueFromURL(t *testing.T) {
 	}
 	if imported.Clarification.Status != "" || imported.Clarification.Gated {
 		t.Fatalf("import must not score or auto-start clarification: %+v", imported.Clarification)
-	}
-}
-
-func TestImportTAPDIssueSaveKeepsExternalBinding(t *testing.T) {
-	root := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	if err := s.PutUser(domain.User{StaffID: 3101, LoginName: "tapd-owner", ChineseName: "导入人"}); err != nil {
-		t.Fatal(err)
-	}
-	owner, _ := s.UserByLoginName("tapd-owner")
-	project, _ := s.Project("platform")
-	project.OwnerID = owner.ID
-	if err := s.PutProject(project); err != nil {
-		t.Fatal(err)
-	}
-	repoID := putPlatformImportRepo(t, s)
-	h := newTAPDImportHandler(t, s, root, `{"data":[{"id":"1010000000100000555","name":"导入后改标题","status":"status_38","priority":"3"}]}`)
-	imported := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues/import-tapd", map[string]any{
-		"projectId":    "platform",
-		"url":          "https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100000555",
-		"repositoryId": repoID,
-	}, http.StatusOK)
-	// Mimic the issue edit form: it spreads list state and can send an empty
-	// externalRef object, which used to skip restore and look like a new issue.
-	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id":          imported.ID,
-		"projectId":   "platform",
-		"title":       "改过的标题",
-		"description": "本地说明",
-		"priority":    "high",
-		"status":      "todo",
-		"kind":        "requirement",
-		"source":      "tapd",
-		"externalRef": map[string]any{},
-	}, http.StatusOK)
-	if saved.Title != "改过的标题" {
-		t.Fatalf("title=%q", saved.Title)
-	}
-	if saved.Source != "tapd" || saved.ExternalRef == nil || saved.ExternalRef.ExternalID != "1010000000100000555" {
-		t.Fatalf("tracker binding lost on save: source=%q ref=%+v", saved.Source, saved.ExternalRef)
-	}
-}
-
-func TestSaveAfterClarificationDoesNotRecreateOrDeleteTAPDIssue(t *testing.T) {
-	root := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	issue := domain.Issue{
-		ID:        "tapd-1010000000100000888",
-		ProjectID: "platform",
-		Title:     "澄清后的需求",
-		Kind:      "requirement",
-		Source:    "tapd",
-		Status:    "todo",
-		ExternalRef: &domain.ExternalRef{
-			Source:       "tapd",
-			ExternalID:   "1010000000100000888",
-			ExternalType: "story",
-		},
-		Clarification: domain.ClarificationAssessment{
-			Gated:   true,
-			Status:  domain.ClarificationReady,
-			Summary: "已补齐验收标准",
-			History: []domain.ClarificationMessage{{Role: "assistant", Content: `{"summary":"ok"}`}},
-		},
-	}
-	if err := s.PutIssue(issue); err != nil {
-		t.Fatal(err)
-	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
-	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id":          issue.ID,
-		"projectId":   "platform",
-		"title":       "澄清后改标题",
-		"description": "补充说明",
-		"priority":    "high",
-		"status":      "todo",
-		"kind":        "requirement",
-		"syncTarget":  "tapd",
-		"externalRef": map[string]any{},
-	}, http.StatusOK)
-	if saved.ID != issue.ID {
-		t.Fatalf("save replaced issue id %q -> %q", issue.ID, saved.ID)
-	}
-	if _, ok := s.Issue(issue.ID); !ok {
-		t.Fatal("original TAPD issue was deleted on save")
-	}
-	if saved.Source != "tapd" || saved.ExternalRef == nil || saved.ExternalRef.ExternalID != "1010000000100000888" {
-		t.Fatalf("binding lost after clarified save: source=%q ref=%+v", saved.Source, saved.ExternalRef)
-	}
-	if saved.Title != "澄清后改标题" {
-		t.Fatalf("title=%q", saved.Title)
-	}
-	if saved.Clarification.Status != domain.ClarificationReady || saved.Clarification.Summary != "已补齐验收标准" {
-		t.Fatalf("clarification wiped on save: %+v", saved.Clarification)
-	}
-}
-
-func TestIssuesSaveDoesNotGateSyncedTAPDRequirement(t *testing.T) {
-	root := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "demodns-issue-fix", Name: "Issue fix", SandboxProfileID: "test-native", Nodes: []domain.WorkflowNode{{ID: "fix", Name: "Fix", Type: "agent"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutRepository(domain.Repository{ID: "repo-new-demodns", ProjectID: "platform", Name: "dns-console", GongfengProjectID: "example/dns-console", DefaultBranch: "master"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutIssue(domain.Issue{
-		ID:          "tapd-1010000000100001776",
-		ProjectID:   "platform",
-		Title:       "mq_flush_dns CMQ SDK",
-		Kind:        "requirement",
-		Source:      "tapd",
-		Status:      "backlog",
-		ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "1010000000100001776", ExternalType: "story"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
-	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id":            "tapd-1010000000100001776",
-		"projectId":     "platform",
-		"title":         "mq_flush_dns CMQ SDK",
-		"kind":          "requirement",
-		"source":        "tapd",
-		"workflowId":    "demodns-issue-fix",
-		"repositoryId":  "repo-new-demodns",
-		"repositoryIds": []string{"repo-new-demodns"},
-	}, http.StatusOK)
-	if saved.WorkflowID != "demodns-issue-fix" || saved.RepositoryID != "repo-new-demodns" {
-		t.Fatalf("binding not saved: workflow=%q repo=%q", saved.WorkflowID, saved.RepositoryID)
-	}
-	if saved.Clarification.Gated || saved.Clarification.Status != "" {
-		t.Fatalf("synced TAPD save must not import-score: %+v", saved.Clarification)
-	}
-}
-
-func TestSaveRestoresTAPDBindingFromStableID(t *testing.T) {
-	root := t.TempDir()
-	s, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-	if err := s.PutIssue(domain.Issue{ID: "tapd-1010000000100000999", ProjectID: "platform", Title: "绑定被清空", Kind: "requirement", Status: "todo"}); err != nil {
-		t.Fatal(err)
-	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces"))), tracker.NewService(), "", "")
-	saved := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id":          "tapd-1010000000100000999",
-		"projectId":   "platform",
-		"title":       "绑定被清空",
-		"kind":        "requirement",
-		"syncTarget":  "tapd",
-		"externalRef": map[string]any{},
-	}, http.StatusOK)
-	if saved.ID != "tapd-1010000000100000999" {
-		t.Fatalf("id=%q", saved.ID)
-	}
-	if saved.Source != "tapd" || saved.ExternalRef == nil || saved.ExternalRef.ExternalID != "1010000000100000999" {
-		t.Fatalf("stable id did not restore binding: source=%q ref=%+v", saved.Source, saved.ExternalRef)
 	}
 }
 

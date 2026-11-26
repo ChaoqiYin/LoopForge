@@ -37,17 +37,17 @@ func TestSOPProposalValidation(t *testing.T) {
 	if err := validateAssistantDraft(&role, "workbench"); err == nil {
 		t.Fatal("a role dispatch draft was accepted; roles are dispatched with the Agent tool")
 	}
-	save := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"id":"i1","title":"t","projectId":"workbench"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
+	save := assistantDraft{Tool: "agents_save", Body: json.RawMessage(`{"id":"a1","name":"t","projectId":"workbench"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
 	if err := validateAssistantDraft(&save, "workbench"); err != nil || save.Proposal != nil {
 		t.Fatalf("a proposal on an ordinary write must be dropped: %v %+v", err, save.Proposal)
 	}
-	rebind := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"id":"i1","title":"t","projectId":"workbench","workflowId":"sop"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
+	rebind := assistantDraft{Tool: "agents_save", Body: json.RawMessage(`{"id":"a1","name":"t","projectId":"workbench","prompt":"x"}`), Proposal: &assistantProposal{Reason: "x", Timing: "start"}}
 	if err := validateAssistantDraft(&rebind, "workbench"); err != nil || rebind.Proposal != nil {
-		t.Fatalf("binding an existing issue to an SOP is not a proposal: %v %+v", err, rebind.Proposal)
+		t.Fatalf("a proposal on an ordinary update must be dropped: %v %+v", err, rebind.Proposal)
 	}
-	create := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","projectId":"workbench","workflowId":"sop"}`), Proposal: &assistantProposal{Reason: "整件需求走 SOP", Timing: "start"}}
+	create := assistantDraft{Tool: "runs_start", Body: json.RawMessage(`{"workflowId":"sop","projectId":"workbench"}`), Proposal: &assistantProposal{Reason: "整件需求走 SOP", Timing: "start"}}
 	if err := validateAssistantDraft(&create, "workbench"); err != nil || create.Proposal == nil {
-		t.Fatalf("a new requirement bound to an SOP lost its proposal: %v %+v", err, create.Proposal)
+		t.Fatalf("an exploration run bound to an SOP lost its proposal: %v %+v", err, create.Proposal)
 	}
 	if target := assistantProposalTarget(create); target != "sop" {
 		t.Fatalf("target=%s", target)
@@ -257,8 +257,8 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 		return h.vetProposalDrafts(session, &assistantReply{Drafts: []assistantDraft{d}})
 	}
 	dispatch := assistantDraft{Tool: "issues_dispatch", Path: map[string]any{"id": "i1"}, Body: json.RawMessage(`{}`)}
-	create := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"title":"t","workflowId":"delivery"}`)}
-	update := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"id":"i1","title":"t","workflowId":"delivery"}`)}
+	create := assistantDraft{Tool: "runs_start", Body: json.RawMessage(`{"workflowId":"delivery"}`)}
+	update := assistantDraft{Tool: "agents_save", Body: json.RawMessage(`{"id":"a1","name":"t","projectId":"workbench"}`)}
 
 	// The AI 助手 switches are off: in confirm mode a SOP Main Bot picks itself asks.
 	seed(domain.AssistantMessage{Role: "user", Content: "积分转赠这个需求帮我推进一下"})
@@ -307,7 +307,7 @@ func TestSOPDraftsNeedAProposalUnlessTheUserAskedForTheSOP(t *testing.T) {
 	for _, taken := range []assistantDraft{accepted, reviewed} {
 		seed(domain.AssistantMessage{Role: "user", Content: "推进一下"},
 			domain.AssistantMessage{Role: "assistant", Content: proposalReply(t, taken)},
-			domain.AssistantMessage{Role: "user", Content: "已确认并执行 issues_save。"})
+			domain.AssistantMessage{Role: "user", Content: "已确认并执行 runs_start。"})
 		if err := vet(dispatch); err != nil {
 			t.Fatalf("the dispatch after a taken SOP proposal asked again: %v", err)
 		}

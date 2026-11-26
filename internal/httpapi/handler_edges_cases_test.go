@@ -387,7 +387,7 @@ func TestAssistantApprovalDraftAndReviewHelpers(t *testing.T) {
 	if strings.Contains(string(clean), "gitToken") || strings.Contains(string(clean), "apiKey") || strings.Contains(string(clean), "password") || strings.Contains(string(clean), "Bearer") {
 		t.Fatalf("secrets retained: %s", clean)
 	}
-	if got := normalizeAssistantIssueBranchDraft("issues_save", json.RawMessage(`{"baseBranch":"main","repositoryBranches":{"a":"master","b":"dev"}}`)); strings.Contains(string(got), "main") || strings.Contains(string(got), "master") {
+	if got := normalizeAssistantIssueBranchDraft("issues_import_tapd", json.RawMessage(`{"baseBranch":"main","repositoryBranches":{"a":"master","b":"dev"}}`)); strings.Contains(string(got), "main") || strings.Contains(string(got), "master") {
 		t.Fatalf("branches not normalized: %s", got)
 	}
 	injected := injectAssistantDraftProjectID("agents_save", json.RawMessage(`{"id":"agent"}`), "p")
