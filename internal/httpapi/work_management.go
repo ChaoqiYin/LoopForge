@@ -165,11 +165,6 @@ func (h *workManagementHandlers) saveConnection(c *gin.Context) {
 		respond(c, err)
 		return
 	}
-	if conn.Enabled && h.service != nil {
-		// Subscription is per file; an administrator permission failure is
-		// recorded as not-ready on the stored connection.
-		_ = h.service.EnsureSubscription(c.Request.Context(), conn)
-	}
 	stored, _ := h.repo.ManagementConnection(conn.ID)
 	c.JSON(http.StatusOK, gin.H{"connection": stored})
 }

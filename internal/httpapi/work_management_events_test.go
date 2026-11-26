@@ -485,6 +485,38 @@ func TestWorkManagementAckDoesNotWaitForProjection(t *testing.T) {
 	})
 }
 
+func TestWorkManagementBusinessKeyConflictRebindsRecord(t *testing.T) {
+	s := newWorkManagementEventTestServer(t)
+	s.configure(t)
+	// Two rows carry the same business key. The business key is the identity:
+	// both project to one Work Item and the record pointer follows the newest
+	// authoritative row.
+	s.fake.setRecord("rec-1", map[string]any{"业务编号": "REQ-1", "标题": "第一行", "状态": "草稿"})
+	s.fake.push(t, s.ws, recordChangedJSON("evt-1", "rec-1", "record_added",
+		map[string]any{"field_id": "fld-业务编号", "field_value": `"REQ-1"`}))
+	if code := s.fake.waitAck(t, 3*time.Second); code != http.StatusOK {
+		t.Fatalf("first ack = %d", code)
+	}
+	s.waitFor(t, "first projection", func() bool {
+		_, ok := s.issueByBusinessKey(t, "REQ-1")
+		return ok
+	})
+
+	s.fake.setRecord("rec-2", map[string]any{"业务编号": "REQ-1", "标题": "第二行", "状态": "草稿"})
+	s.fake.push(t, s.ws, recordChangedJSON("evt-2", "rec-2", "record_added",
+		map[string]any{"field_id": "fld-业务编号", "field_value": `"REQ-1"`}))
+	if code := s.fake.waitAck(t, 3*time.Second); code != http.StatusOK {
+		t.Fatalf("second ack = %d", code)
+	}
+	s.waitFor(t, "rebound record", func() bool {
+		issue, ok := s.issueByBusinessKey(t, "REQ-1")
+		return ok && issue.ExternalRef.RecordID == "rec-2" && issue.Title == "第二行"
+	})
+	if count := s.workItemCount(t); count != 1 {
+		t.Fatalf("business key conflict created %d work items", count)
+	}
+}
+
 func TestWorkManagementFormulaFieldIsReadBack(t *testing.T) {
 	s := newWorkManagementEventTestServer(t)
 	s.configure(t)

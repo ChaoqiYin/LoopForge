@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,9 @@ type ServiceOptions struct {
 	FullSyncInterval  time.Duration
 	RetryBase         time.Duration
 	RetryMax          time.Duration
+	// AckTimeout bounds the synchronous Event Inbox write inside the Feishu
+	// callback so the SDK acknowledges within three seconds.
+	AckTimeout time.Duration
 }
 
 // Service owns event intake, the Event Inbox worker, Work Item projection and
@@ -65,9 +69,13 @@ type Service struct {
 	fullSyncEvery  time.Duration
 	retryBase      time.Duration
 	retryMax       time.Duration
+	ackTimeout     time.Duration
 
-	mu   sync.Mutex // serializes projection and reconciliation writes
-	wake chan struct{}
+	mu sync.Mutex // serializes projection and reconciliation writes
+	// syncMu serializes reconciliation passes so two runs cannot regress the
+	// cursor or race their orphan detection.
+	syncMu sync.Mutex
+	wake   chan struct{}
 
 	startOnce sync.Once
 }
@@ -99,10 +107,14 @@ func NewService(adapter *FeishuAdapter, store ProjectionStore, opts ServiceOptio
 	if retryMax <= 0 {
 		retryMax = 10 * time.Minute
 	}
+	ackTimeout := opts.AckTimeout
+	if ackTimeout <= 0 {
+		ackTimeout = 2500 * time.Millisecond
+	}
 	return &Service{
 		adapter: adapter, store: store, now: now, logger: logger,
 		reconcileEvery: reconcileEvery, fullSyncEvery: fullEvery,
-		retryBase: retryBase, retryMax: retryMax,
+		retryBase: retryBase, retryMax: retryMax, ackTimeout: ackTimeout,
 		wake: make(chan struct{}, 1),
 	}
 }
@@ -185,6 +197,9 @@ func (s *Service) reconcileLoop(ctx context.Context) {
 			if !conn.Enabled || conn.Platform != domain.ManagementPlatformFeishuBitable {
 				continue
 			}
+			// Re-assert the per-file subscription so a connection enabled
+			// after startup still receives events.
+			_ = s.EnsureSubscription(ctx, conn)
 			if _, err := s.SyncConnection(ctx, conn, full); err != nil {
 				s.logger("work management: reconcile %s: %s", conn.ID, UserMessage(err))
 			}
@@ -238,30 +253,35 @@ func (s *Service) AcceptRecordChanged(ctx context.Context, event RecordChangedEv
 	if strings.TrimSpace(event.EventID) == "" {
 		return nil
 	}
-	conn, ok := s.connectionFor(event.FileToken, event.TableID)
-	if !ok {
-		s.logger("work management: ignoring event %s for unconfigured file %s/%s", event.EventID, event.FileToken, event.TableID)
-		return nil
-	}
 	now := s.now()
-	for _, action := range event.Actions {
-		inboxAction, ok := inboxActionFor(action.Action)
+	if err := s.persistWithinAck(ctx, func() error {
+		conn, ok := s.connectionFor(event.FileToken, event.TableID)
 		if !ok {
-			continue
+			s.logger("work management: ignoring event %s for unconfigured file %s/%s", event.EventID, event.FileToken, event.TableID)
+			return nil
 		}
-		payload, err := json.Marshal(action)
-		if err != nil {
-			return err
+		for i, action := range event.Actions {
+			inboxAction, ok := inboxActionFor(action.Action)
+			if !ok {
+				continue
+			}
+			payload, err := json.Marshal(action)
+			if err != nil {
+				return err
+			}
+			_, err = s.store.RecordWorkManagementEvent(domain.WorkManagementEvent{
+				EventID:      event.EventID + ":" + strconv.Itoa(i) + ":" + strings.TrimSpace(action.RecordID) + ":" + string(inboxAction),
+				ConnectionID: conn.ID, TableID: conn.TableID,
+				RecordID: strings.TrimSpace(action.RecordID), Action: inboxAction,
+				Payload: payload, Status: domain.ManagementEventPending, ReceivedAt: now,
+			})
+			if err != nil {
+				return err
+			}
 		}
-		_, err = s.store.RecordWorkManagementEvent(domain.WorkManagementEvent{
-			EventID:      event.EventID + ":" + strings.TrimSpace(action.RecordID) + ":" + string(inboxAction),
-			ConnectionID: conn.ID, TableID: conn.TableID,
-			RecordID: strings.TrimSpace(action.RecordID), Action: inboxAction,
-			Payload: payload, Status: domain.ManagementEventPending, ReceivedAt: now,
-		})
-		if err != nil {
-			return err
-		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	s.signal()
 	return nil
@@ -273,22 +293,42 @@ func (s *Service) AcceptFieldChanged(ctx context.Context, event FieldChangedEven
 	if strings.TrimSpace(event.EventID) == "" {
 		return nil
 	}
-	conn, ok := s.connectionFor(event.FileToken, event.TableID)
-	if !ok {
-		return nil
-	}
-	_, err := s.store.RecordWorkManagementEvent(domain.WorkManagementEvent{
-		EventID:      event.EventID + ":field_changed",
-		ConnectionID: conn.ID, TableID: conn.TableID,
-		Action:     domain.ManagementEventFieldChanged,
-		Status:     domain.ManagementEventPending,
-		ReceivedAt: s.now(),
-	})
-	if err != nil {
+	if err := s.persistWithinAck(ctx, func() error {
+		conn, ok := s.connectionFor(event.FileToken, event.TableID)
+		if !ok {
+			return nil
+		}
+		_, err := s.store.RecordWorkManagementEvent(domain.WorkManagementEvent{
+			EventID:      event.EventID + ":field_changed",
+			ConnectionID: conn.ID, TableID: conn.TableID,
+			Action:     domain.ManagementEventFieldChanged,
+			Status:     domain.ManagementEventPending,
+			ReceivedAt: s.now(),
+		})
+		return err
+	}); err != nil {
 		return err
 	}
 	s.signal()
 	return nil
+}
+
+// errFeishuAckTimeout means the inbox write did not finish inside the
+// acknowledgement budget. Returning an error makes Feishu redeliver; the
+// redelivered event is deduplicated by event id if the write completes later.
+var errFeishuAckTimeout = errors.New("飞书事件入库超时，等待平台重投")
+
+func (s *Service) persistWithinAck(ctx context.Context, persist func() error) error {
+	ackCtx, cancel := context.WithTimeout(ctx, s.ackTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- persist() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ackCtx.Done():
+		return errFeishuAckTimeout
+	}
 }
 
 func inboxActionFor(action string) (domain.ManagementEventAction, bool) {
@@ -667,6 +707,8 @@ func (s *Service) SyncNow(ctx context.Context, conn domain.ManagementConnection)
 // as orphaned. The watermark is truncated to the start of its UTC day because
 // Bitable date filters only reach whole days.
 func (s *Service) SyncConnection(ctx context.Context, conn domain.ManagementConnection, full bool) (SyncSummary, error) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
 	mappings, err := s.store.ManagementFieldMappings(conn.ID, conn.TableID)
 	if err != nil {
 		return SyncSummary{}, err
@@ -675,6 +717,7 @@ func (s *Service) SyncConnection(ctx context.Context, conn domain.ManagementConn
 		return SyncSummary{}, err
 	}
 	summary := SyncSummary{Full: full}
+	startedAt := s.now()
 	cutoff := conn.SyncCursor.LastModifiedAt
 	if full || cutoff.IsZero() {
 		cutoff = time.Time{}
@@ -724,6 +767,11 @@ func (s *Service) SyncConnection(ctx context.Context, conn domain.ManagementConn
 	}
 	for _, issue := range local {
 		if issue.ExternalRef == nil || issue.ExternalRef.Orphaned {
+			continue
+		}
+		// A concurrent event may have projected this Work Item after the
+		// remote snapshot was read; it is not missing remotely.
+		if !issue.ExternalRef.SyncedAt.Before(startedAt) {
 			continue
 		}
 		if seenKeys[issue.ExternalRef.BusinessKey] || seenRecords[issue.ExternalRef.RecordID] {
