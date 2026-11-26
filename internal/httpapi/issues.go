@@ -158,6 +158,7 @@ func (h issuesHandlers) issues(c *gin.Context) {
 			Source:    strings.TrimSpace(c.Query("source")),
 			Q:         strings.TrimSpace(c.Query("q")),
 			Assignee:  strings.TrimSpace(c.Query("assignee")),
+			Formal:    c.Query("formal") == "1" || strings.EqualFold(c.Query("formal"), "true"),
 		})
 		if _, ok := c.GetQuery("limit"); !ok {
 			views, err := h.issueDeletionViews(items)
@@ -208,169 +209,14 @@ func (h issuesHandlers) issues(c *gin.Context) {
 		return
 	}
 	if r.Method == http.MethodPut || r.Method == http.MethodPost {
-		var req issueWriteRequest
-		files, ok := decodeIssueWrite(c, &req)
-		if r.MultipartForm != nil {
-			defer r.MultipartForm.RemoveAll()
+		// Work Items are projections of external records. Local creation and
+		// content edits are closed; external sync and the compatibility import
+		// endpoints write through the repo instead.
+		message := "Work Item 只读：请在外部管理工作台维护需求内容"
+		if r.Method == http.MethodPost {
+			message = "本地建单已关闭：Work Item 由外部管理工作台同步，请勿在平台创建需求"
 		}
-		if !ok {
-			return
-		}
-		v := req.Issue
-		branchesProvided := v.RepositoryBranches != nil
-		existing, found := h.repo.Issue(v.ID)
-		// Only a conversation workspace records which conversation created a
-		// requirement, and deleting that conversation may delete the
-		// requirement with it, so a client cannot set or move it.
-		v.ConversationSessionID = ""
-		if found {
-			v.ConversationSessionID = existing.ConversationSessionID
-		}
-		if !v.Clarification.StartedAt.IsZero() && v.Clarification.StartedAt.After(time.Now().UTC().Add(time.Minute)) {
-			c.JSON(http.StatusBadRequest, map[string]string{"error": "澄清开始时间不能晚于当前时间"})
-			return
-		}
-		if req.TapdID != nil {
-			v.TapdID = strings.TrimSpace(*req.TapdID)
-		} else if found {
-			v.TapdID = existing.TapdID
-		}
-		if found {
-			if !h.requireProjectWriter(c, v.ProjectID, existing.ProjectID) {
-				return
-			}
-			v = mergeIssueEdit(v, existing)
-		} else if !h.requireProjectWriter(c, v.ProjectID) {
-			return
-		}
-		if len(files) > 0 && (v.ID != "" || (req.SyncTarget != "" && !strings.EqualFold(req.SyncTarget, "local"))) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "图片只能随新需求一起保存到平台"})
-			return
-		}
-		// Clients such as the AI assistant echo a fetched issue back. Resending
-		// the stored branch is not a new selection, so legacy records holding a
-		// shared branch normalize below instead of failing validation.
-		if found && req.BaseBranch != nil && strings.TrimSpace(*req.BaseBranch) != "" && strings.TrimSpace(*req.BaseBranch) == strings.TrimSpace(existing.BaseBranch) {
-			req.BaseBranch = nil
-		}
-		// An explicit empty branch restores automatic branch creation; an omitted
-		// field preserves the selection on edits made by older clients.
-		if req.BaseBranch != nil {
-			v.BaseBranch = *req.BaseBranch
-			if !branchesProvided {
-				v.RepositoryBranches = nil
-			}
-		}
-		if found && req.BaseBranch == nil && !branchesProvided {
-			h.inheritIssueRepositoryBranches(&v, existing)
-		}
-		if found && req.BaseBranch == nil {
-			h.normalizeLegacyIssueBaseBranch(&v)
-		}
-		if !found && v.AssigneeUserID == 0 {
-			if current, ok := h.requestUser(c.Request, true); ok && current != nil && current.ID > 0 {
-				v.AssigneeUserID = current.ID
-			}
-		}
-		if v.ProjectID == "" || v.Title == "" {
-			c.JSON(400, map[string]string{"error": "projectId and title are required"})
-			return
-		}
-		if v.Status == "" {
-			v.Status = "backlog"
-		}
-		if v.Priority == "" {
-			v.Priority = "medium"
-		}
-		if _, ok := h.repo.Project(v.ProjectID); !ok {
-			c.JSON(400, map[string]string{"error": "project not found"})
-			return
-		}
-		h.bindRequirementPlaybook(&v)
-		if v.AssigneeUserID > 0 {
-			if _, ok := h.repo.User(v.AssigneeUserID); !ok {
-				c.JSON(400, map[string]string{"error": "assignee must reference an existing user"})
-				return
-			}
-		}
-		if err := h.bindIssueRepositories(&v); err != nil {
-			c.JSON(400, map[string]string{"error": err.Error()})
-			return
-		}
-		if found {
-			h.invalidateIssueClarifySessionOnRepositoryChange(&v, existing)
-		}
-		if strings.EqualFold(req.SyncTarget, "tapd") && v.Kind == "" {
-			v.Kind = "requirement"
-		}
-		if err := validateManualTapdID(v, req.SyncTarget); err != nil {
-			respond(c, err)
-			return
-		}
-		// Clarification is optional: saving a ticket never scores it or starts
-		// a round. Binding SOP or repositories must not invent a status.
-		if found {
-			keepExistingTrackerBinding(&v, existing)
-		} else {
-			// Only the server records audit entries for a newly created issue.
-			v.Operations = nil
-			keepExistingTrackerBinding(&v, domain.Issue{})
-		}
-		if !found && !repo.IssueBoundToTracker(v) {
-			target := strings.ToLower(strings.TrimSpace(req.SyncTarget))
-			switch target {
-			case "gongfeng", "tapd":
-				created, err := h.createIssueOnTracker(v, target)
-				if err != nil {
-					respond(c, err)
-					return
-				}
-				stored, _ := h.repo.Issue(created.ID)
-				if stored.ID != "" {
-					h.recordIssueOperation(c, &stored, "create", "创建需求")
-					if err := h.repo.PutIssue(stored); err != nil {
-						respond(c, err)
-						return
-					}
-					stored, _ = h.repo.Issue(stored.ID)
-				}
-				h.writeIssueView(c, 200, stored)
-				return
-			case "", "local":
-				if v.Kind == "" {
-					v.Kind = "requirement"
-				}
-				v.Source = "local"
-				v.ExternalRef = nil
-			default:
-				c.JSON(400, map[string]string{"error": "syncTarget 只能是 local、gongfeng 或 tapd"})
-				return
-			}
-		}
-		if v.ID == "" {
-			v.ID = fmt.Sprintf("issue-%d", time.Now().UnixNano())
-		}
-		if !found {
-			h.recordIssueOperation(c, &v, "create", "创建需求")
-		} else if detail := issueChangeDetail(existing, v); detail != "" {
-			h.recordIssueOperation(c, &v, "update", detail)
-		}
-		var err error
-		if len(files) > 0 {
-			images, ok := readIssueImages(c, files)
-			if !ok {
-				return
-			}
-			err = h.repo.CreateIssueWithImages(v, images)
-		} else {
-			err = h.repo.PutIssue(v)
-		}
-		if err != nil {
-			respond(c, err)
-			return
-		}
-		stored, _ := h.repo.Issue(v.ID)
-		h.writeIssueView(c, 200, stored)
+		c.JSON(http.StatusMethodNotAllowed, map[string]string{"error": message})
 		return
 	}
 }
@@ -497,6 +343,9 @@ func (h issuesHandlers) issue(c *gin.Context) {
 // Use the account that will execute the clarification. This catalog is only
 // available to callers allowed to start the clarification.
 func (h issuesHandlers) clarifyModels(c *gin.Context, issue domain.Issue) {
+	if !h.requireFormalWorkItem(c, issue, "澄清") {
+		return
+	}
 	if !h.requireProjectWriter(c, issue.ProjectID) {
 		return
 	}
@@ -703,6 +552,7 @@ type issueListQuery struct {
 	Source    string
 	Q         string
 	Assignee  string
+	Formal    bool
 }
 
 func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
@@ -716,6 +566,9 @@ func filterIssues(items []domain.Issue, q issueListQuery) []domain.Issue {
 			continue
 		}
 		if !csvContainsFold(q.Source, item.Source) {
+			continue
+		}
+		if q.Formal && !item.FormalWorkItem() {
 			continue
 		}
 		if q.Assignee != "" && !issueMatchesAssignee(item, q.Assignee) {

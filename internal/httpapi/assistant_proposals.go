@@ -39,7 +39,7 @@ func assistantProposalSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"reason", "timing"},
-		"description":          "走 SOP 的建议：用户没 @ SOP、也没点名要走 SOP 或完整流程，是你自己决定交给 SOP（绑定 SOP 新建需求的 issues_save、issues_dispatch、runs_start）时必填；用户明确要求时不填",
+		"description":          "走 SOP 的建议：用户没 @ SOP、也没点名要走 SOP 或完整流程，是你自己决定交给 SOP（issues_dispatch 或 runs_start）时必填；用户明确要求时不填",
 		"properties": map[string]any{
 			"reason": map[string]any{"type": "string", "description": "一句话说明为什么这件事走 SOP 更合适"},
 			"timing": map[string]any{"type": "string", "enum": []string{assistantProposalStart, assistantProposalEnd}, "description": "start：整件事走 SOP、你还没开始做；end：你已做完自己的部分，这是可选的后续工作"},
@@ -54,12 +54,6 @@ func assistantSOPDraft(d assistantDraft) bool {
 	switch d.Tool {
 	case "issues_dispatch", "runs_start":
 		return true
-	case "issues_save":
-		var body struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal(d.Body, &body)
-		return strings.TrimSpace(body.ID) == "" && assistantProposalTarget(d) != ""
 	default:
 		return false
 	}
@@ -187,7 +181,7 @@ func delegationContext(req *assistantRequest, prefs domain.AssistantPreferences,
 	}
 	if mode == AssistantApprovalAssisted {
 		b.WriteString("## 交给 SOP 的审批方式\n")
-		b.WriteString("当前是帮我批准：你自己决定走 SOP 时直接调用写入工具（需求还没建时用绑定 SOP 的 issues_save，已存在时用 issues_dispatch），由独立 AI 审查这件事是否该走 SOP 并直接裁决，无需提交草稿卡片；若被拒绝，按拒绝原因调整或直接自己处理。\n")
+		b.WriteString("当前是帮我批准：你自己决定走 SOP 时直接调用写入工具（需求已同步时用 issues_dispatch，没有对应 Work Item 的探索用 runs_start），由独立 AI 审查这件事是否该走 SOP 并直接裁决，无需提交草稿卡片；若被拒绝，按拒绝原因调整或直接自己处理。\n")
 		return b.String()
 	}
 	b.WriteString("## 交给 SOP 前先征得同意\n")
@@ -224,9 +218,9 @@ const (
 	assistantDelegationRole      = "- 派角色：用户要的整件事就是某个角色的本职（如独立评审、整套测试），且工作量不小；你这轮改了代码，改动碰到资金/积分、并发、鉴权权限、数据迁移或对外接口这类出错代价高的地方，需要评审或测试角色独立复核；有几块互不依赖的工作可以并行。符合时直接用 Agent 工具派给对应的子 Agent，不用征求同意；派发前用一句话告诉用户交给了谁、为什么。\n"
 	assistantDelegationRoleCheck = "- 收尾检查：回复前看一眼——这轮改了上面说的高风险代码、项目里又有评审或测试角色时，先用 Agent 工具派它独立复核（prompt 写清仓库、改动文件和要重点复核的点），核对它的结论后一起汇报；否则照常回复。\n"
 	assistantDelegationSOP       = "- 走 SOP：用户提的是一条要落到仓库的新需求或新功能（不是修 bug、不是小改动），且项目里有用途对得上的 SOP；用户说“推进/交付/做这个需求”就属于这种。动手实现前先交给 SOP，不要自己做完再说。\n"
-	assistantDelegationSOPAuto   = "当前是完全权限：走 SOP 时直接调用写入工具（需求还没建时用绑定 SOP 的 issues_save，已存在时用 issues_dispatch），在回复里说明交给了哪个 SOP、为什么。\n"
+	assistantDelegationSOPAuto   = "当前是完全权限：走 SOP 时直接调用写入工具（需求已同步时用 issues_dispatch，没有对应 Work Item 的探索用 runs_start），在回复里说明交给了哪个 SOP、为什么。\n"
 
-	assistantProposalRules = `用户没 @ SOP、也没点名要走 SOP 或完整流程时，你自己决定交给 SOP 的事是建议，要在 drafts 里提交并带 proposal={reason, timing}：需求还没建时提交绑定 SOP 的 issues_save（body 带 workflowId），这张卡就是建议；需求已存在时提交 issues_dispatch。用户接受后，后续派发就是用户要的操作，不再带 proposal。
+	assistantProposalRules = `用户没 @ SOP、也没点名要走 SOP 或完整流程时，你自己决定交给 SOP 的事是建议，要在 drafts 里提交并带 proposal={reason, timing}：需求已同步时提交 issues_dispatch；没有对应 Work Item 时用 runs_start 做临时探索。平台已关闭本地建单，不要尝试创建需求。用户接受后，后续派发就是用户要的操作，不再带 proposal。
 - 只说“推进”“交付”“实现这个需求”不算点名。
 - timing=start：整件事就该走 SOP、自己做不划算。只做判断所需的少量只读查询，然后立刻提交，不要先做半天再问。确认时限由卡片展示，message 里不要提。
 - timing=end：先把自己能做的做完并在 message 里汇报，再把可选的后续 SOP 作为建议提交；用户不点也不影响本轮交付。

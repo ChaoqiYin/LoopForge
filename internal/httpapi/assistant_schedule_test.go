@@ -118,9 +118,6 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 			}
 			user, _ := st.UserByLoginName("auto-owner")
 			joinScheduledProject(t, st, "platform", user.ID)
-			if err := st.PutIssue(domain.Issue{ID: "scheduled-issue", ProjectID: "platform", Title: "keep", Source: "tapd", Status: "backlog"}); err != nil {
-				t.Fatal(err)
-			}
 			api := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
 			h := &assistantHandlers{deps: &deps{repo: st}, api: api}
 			called := false
@@ -142,7 +139,7 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 					t.Fatal("scheduled prompts must allow SOP execution")
 				}
 				if _, err := h.callAssistantPlatform(ctx, u, "platform", assistantMCPCall{
-					Tool: "issues_save", Body: map[string]any{"id": "scheduled-issue", "automationState": "ignored"},
+					Tool: "agents_save", Body: map[string]any{"id": "scheduled-agent", "name": "巡检角色", "projectId": "platform"},
 				}); err != nil {
 					t.Fatalf("scheduled write should execute immediately: %v", err)
 				}
@@ -154,11 +151,11 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 				return "已完成写入", nil
 			}
 			if scheduleJob {
-				if _, err := h.prepareScheduleJob(domain.ScheduleJob{ProjectID: "platform", OwnerUserID: user.ID, AssistantPrompt: "将需求标记为 ignored"}); err != nil {
+				if _, err := h.prepareScheduleJob(domain.ScheduleJob{ProjectID: "platform", OwnerUserID: user.ID, AssistantPrompt: "保存巡检角色"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				task := assistantTask{ProjectID: "platform", Prompt: "将需求标记为 ignored"}
+				task := assistantTask{ProjectID: "platform", Prompt: "保存巡检角色"}
 				if err := h.executeAssistantTask(context.Background(), user, &task); err != nil {
 					t.Fatal(err)
 				}
@@ -166,9 +163,9 @@ func TestScheduledAssistantAutoWritesWithoutConfirmation(t *testing.T) {
 					t.Fatalf("scheduled task status: %+v", task)
 				}
 			}
-			got, _ := st.Issue("scheduled-issue")
-			if !called || got.AutomationState != "ignored" || got.Title != "keep" {
-				t.Fatalf("scheduled write did not persist: called=%v issue=%+v", called, got)
+			agent, _ := st.Agent("scheduled-agent")
+			if !called || agent.Name != "巡检角色" {
+				t.Fatalf("scheduled write did not persist: called=%v agent=%+v", called, agent)
 			}
 		})
 	}

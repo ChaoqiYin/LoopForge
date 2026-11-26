@@ -216,18 +216,19 @@ func (h *roomsHandlers) createIssue(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
-// dispatchRoomIssue creates the issue behind a room dispatch and starts every
-// requested SOP, posting one dispatch card per lane. Errors are written to c.
+// dispatchRoomIssue dispatches one or more SOPs on a Work Item that was
+// synced from an external management platform. A room no longer creates a
+// local issue; callers select an existing synced Work Item by id.
 func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, req roomIssueRequest) (roomIssueResult, bool) {
-	if len([]rune(req.Title)) > 200 || len([]rune(req.Description)) > 8000 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "标题或描述过长"})
+	if len([]rune(req.Description)) > 8000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "描述过长"})
 		return roomIssueResult{}, false
 	}
-	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
 	workflowIDs := roomWorkflowIDs(req)
-	if req.Title == "" && strings.TrimSpace(req.IssueID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+	issueID := strings.TrimSpace(req.IssueID)
+	if issueID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择已同步的 Work Item"})
 		return roomIssueResult{}, false
 	}
 	// Roles stay inside the SOP. A room can only start work by dispatching
@@ -250,39 +251,16 @@ func (h *roomsHandlers) dispatchRoomIssue(c *gin.Context, room domain.ChatRoom, 
 		workflowNames[i] = wf.Name
 	}
 	userID, author := h.roomActor(c)
-	if id := strings.TrimSpace(req.IssueID); id != "" {
-		existing, found := h.repo.Issue(id)
-		if !found || existing.ProjectID != room.ProjectID {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "需求不存在或不属于当前项目"})
-			return roomIssueResult{}, false
-		}
-		return h.dispatchToIssue(c, room, existing, req.Description, workflowIDs, workflowNames, userID, author)
-	}
-	issue := domain.Issue{
-		ID:          newChatID("iss"),
-		ProjectID:   room.ProjectID,
-		Title:       req.Title,
-		Description: req.Description,
-		Status:      "todo",
-		Priority:    "medium",
-		Kind:        "issue",
-		Source:      "local",
-		WorkflowID:  workflowIDs[0],
-	}
-	if userID > 0 {
-		issue.AssigneeUserID = userID
-	}
-	_, _, targetName := roomDispatchTarget(workflowIDs, workflowNames)
-	issue.AppendOperation(domain.IssueOperation{
-		Actor: author, ActorUserID: userID, Action: "create",
-		Detail: "从协作群「" + room.Name + "」建单，派给" + targetName,
-	})
-	if err := h.repo.PutIssue(issue); err != nil {
-		respond(c, err)
+	existing, found := h.repo.Issue(issueID)
+	if !found || existing.ProjectID != room.ProjectID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需求不存在或不属于当前项目"})
 		return roomIssueResult{}, false
 	}
-	stored, _ := h.repo.Issue(issue.ID)
-	return h.dispatchToIssue(c, room, stored, req.Description, workflowIDs, workflowNames, userID, author)
+	if !existing.FormalWorkItem() {
+		c.JSON(http.StatusConflict, gin.H{"error": "只能选择已同步的 Work Item"})
+		return roomIssueResult{}, false
+	}
+	return h.dispatchToIssue(c, room, existing, req.Description, workflowIDs, workflowNames, userID, author)
 }
 
 // dispatchToIssue starts each workflow on stored and records one dispatch

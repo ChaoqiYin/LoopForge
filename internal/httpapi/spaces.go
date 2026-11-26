@@ -202,6 +202,10 @@ func (h *spacesHandlers) createSpace(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "需求不存在或不属于这个项目"})
 			return
 		}
+		if !issue.FormalWorkItem() {
+			c.JSON(http.StatusConflict, gin.H{"error": "只能选择已同步的 Work Item"})
+			return
+		}
 		if existing, ok := h.repo.SpaceByIssue(issue.ID); ok {
 			if room, ok := h.repo.Room(existing.ID); ok {
 				c.JSON(http.StatusOK, h.view(room))
@@ -337,11 +341,9 @@ func (h *spacesHandlers) space(c *gin.Context) {
 	}
 }
 
-var issuePriorities = map[string]bool{"urgent": true, "high": true, "medium": true, "low": true}
-
-// requirement turns the conversation into a platform requirement the user
-// asked for: it creates the issue, links it and notes it on the timeline.
-// A conversation carries at most one requirement.
+// requirement links the conversation to a synced Work Item.
+// A conversation no longer creates a local requirement; callers select an
+// existing synced Work Item by id.
 func (h *spacesHandlers) requirement(c *gin.Context) {
 	room, space, ok := h.loadSpace(c, true)
 	if !ok {
@@ -352,35 +354,26 @@ func (h *spacesHandlers) requirement(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Priority    string `json:"priority"`
+		IssueID string `json:"issueId"`
 	}
 	if !decode(c, &req) {
 		return
 	}
-	req.Title, req.Description = strings.TrimSpace(req.Title), strings.TrimSpace(req.Description)
-	if req.Title == "" || len([]rune(req.Title)) > 200 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "需求标题需要 1 到 200 个字"})
+	req.IssueID = strings.TrimSpace(req.IssueID)
+	if req.IssueID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择已同步的 Work Item"})
 		return
 	}
-	if len([]rune(req.Description)) > 8000 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "需求描述不能超过 8000 个字"})
+	issue, found := h.repo.Issue(req.IssueID)
+	if !found || issue.ProjectID != room.ProjectID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需求不存在或不属于当前项目"})
 		return
 	}
-	if req.Priority == "" {
-		req.Priority = "medium"
-	}
-	if !issuePriorities[req.Priority] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "优先级只能是 urgent、high、medium 或 low"})
+	if !issue.FormalWorkItem() {
+		c.JSON(http.StatusConflict, gin.H{"error": "只能选择已同步的 Work Item"})
 		return
 	}
 	userID, author := h.rooms.roomActor(c)
-	issue, err := h.createIssue(room, req.Title, req.Description, req.Priority, userID, author)
-	if err != nil {
-		respond(c, err)
-		return
-	}
 	space.IssueID = issue.ID
 	if err := h.saveSpace(room, space); err != nil {
 		respond(c, err)
@@ -388,24 +381,8 @@ func (h *spacesHandlers) requirement(c *gin.Context) {
 	}
 	_, _ = h.post(room, domain.ChatMessage{UserID: userID, Author: author, Kind: domain.ChatKindMilestone,
 		IssueID: issue.ID, IssueNumber: issue.Number, IssueTitle: issue.Title,
-		Body: fmt.Sprintf("建了需求 #%d「%s」", issue.Number, issue.Title)})
+		Body: fmt.Sprintf("关联了需求 #%d「%s」", issue.Number, issue.Title)})
 	c.JSON(http.StatusCreated, h.view(room))
-}
-
-func (h *spacesHandlers) createIssue(room domain.ChatRoom, title, description, priority string, userID int64, author string) (domain.Issue, error) {
-	issue := domain.Issue{
-		ID: newChatID("iss"), ProjectID: room.ProjectID, Title: title, Description: description,
-		Status: "todo", Priority: priority, Kind: "issue", Source: "local",
-	}
-	if userID > 0 {
-		issue.AssigneeUserID = userID
-	}
-	issue.AppendOperation(domain.IssueOperation{Actor: author, ActorUserID: userID, Action: "create", Detail: "从会话「" + room.Name + "」建需求"})
-	if err := h.repo.PutIssue(issue); err != nil {
-		return issue, err
-	}
-	stored, _ := h.repo.Issue(issue.ID)
-	return stored, nil
 }
 
 func (h *spacesHandlers) members(c *gin.Context) {

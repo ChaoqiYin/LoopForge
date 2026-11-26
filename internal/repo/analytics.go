@@ -56,6 +56,20 @@ type analyticsRunSignals struct {
 	byNode        map[string]domain.AnalyticsHumanCounts
 }
 
+// formalAnalyticsRuns drops Temporary Runs from formal statistics. Delivery
+// and project usage only aggregate Work Item runs, so a scratch exploration
+// must not inflate them.
+func formalAnalyticsRuns(runs []domain.Run) []domain.Run {
+	out := runs[:0]
+	for _, run := range runs {
+		if run.IsTemporary() {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
+}
+
 // Analytics returns a read-only, vendor-neutral operational view across runs.
 func (r *AnalyticsRepo) Analytics(filter domain.AnalyticsFilter) domain.AnalyticsSnapshot {
 	return r.analyticsWithRuns(filter, nil)
@@ -130,6 +144,10 @@ func (r *AnalyticsRepo) analyticsWithRuns(filter domain.AnalyticsFilter, prefetc
 			},
 		)
 	}
+
+	// Exploration runs started outside a Work Item never enter formal
+	// statistics, even when the caller did not filter them out.
+	runList = formalAnalyticsRuns(runList)
 
 	agentDefs := map[string]domain.AgentDefinition{}
 	for _, agent := range agentList {

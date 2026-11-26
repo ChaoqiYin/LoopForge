@@ -125,7 +125,7 @@ func TestAutoModeStartsRecordTheChat(t *testing.T) {
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		session := botTestToolSession(t, user.ID)
 		for _, body := range []string{
-			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agentflow__issues_save","arguments":{"body":{"projectId":"p","title":"MCP 创建的需求"}}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agentflow__agents_save","arguments":{"body":{"id":"mcp-attribution-agent","name":"MCP 保存的角色","projectId":"p"}}}}`,
 			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agentflow__issues_dispatch","arguments":{"path":{"id":"by-tool"}}}}`,
 		} {
 			req := httptest.NewRequest(http.MethodPost, "/internal/agent-tools/"+session.Token+"/mcp", strings.NewReader(body))
@@ -153,7 +153,7 @@ func TestAutoModeStartsRecordTheChat(t *testing.T) {
 			t.Fatalf("%s audit attribution = %+v", op.Action, op)
 		}
 	}
-	assertActor(latestIssueOperation(t, s, "create"))
+	assertActor(latestIssueOperation(t, s, "dispatch"))
 	for _, issueID := range []string{"by-tool", "by-draft"} {
 		issue, _ := s.Issue(issueID)
 		if len(issue.Operations) != 1 || issue.Operations[0].Action != "dispatch" {

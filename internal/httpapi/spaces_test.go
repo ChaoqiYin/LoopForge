@@ -36,6 +36,13 @@ func TestConversationLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.PutIssue(domain.Issue{
+		ID: "space-linked-issue", ProjectID: "platform", Title: "积分商城兑换改版", Number: 7,
+		Description: "兑换流程从 4 步缩到 2 步", Status: "todo", Priority: "high", Kind: "issue", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-space-linked"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
@@ -131,12 +138,12 @@ func TestConversationLifecycle(t *testing.T) {
 	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, base+"/requirement", map[string]any{"title": " "}, http.StatusBadRequest)
 	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, base+"/requirement", map[string]any{"title": "积分兑换", "priority": "p0"}, http.StatusBadRequest)
 	linked := requestJSONAuthed[spaceView](t, h, owner, http.MethodPost, base+"/requirement", map[string]any{
-		"title": "积分商城兑换改版", "description": "兑换流程从 4 步缩到 2 步", "priority": "high",
+		"issueId": "space-linked-issue",
 	}, http.StatusCreated)
-	if linked.Requirement == nil || linked.IssueID != linked.Requirement.ID || linked.Requirement.Number == 0 || linked.Requirement.Priority != "high" || linked.Requirement.Status != "todo" {
+	if linked.Requirement == nil || linked.IssueID != linked.Requirement.ID || linked.Requirement.Number != 7 || linked.Requirement.Priority != "high" || linked.Requirement.Status != "todo" {
 		t.Fatalf("requirement: %+v", linked)
 	}
-	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, base+"/requirement", map[string]any{"title": "再建一个"}, http.StatusConflict)
+	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, base+"/requirement", map[string]any{"issueId": "space-linked-issue"}, http.StatusConflict)
 	reopened := requestJSONAuthed[spaceView](t, h, owner, http.MethodPost, "/api/spaces", map[string]any{"projectId": "platform", "title": "x", "issueId": linked.IssueID}, http.StatusOK)
 	if reopened.ID != space.ID {
 		t.Fatalf("a requirement keeps one conversation: %s vs %s", reopened.ID, space.ID)
@@ -232,7 +239,14 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := New(s, engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
+	if err := s.PutWorkflow(domain.WorkflowDefinition{
+		ID: "space-be-2", Name: "后端联调", Version: 1, ProjectID: "platform", Status: "published", SandboxProfileID: "test-native",
+		Nodes: []domain.WorkflowNode{{ID: "review", Name: "联调评审", Type: "approval", MaxAttempts: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
 	issuesBefore := len(s.Issues())
 
@@ -245,18 +259,35 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 		t.Fatalf("plain conversations open empty: %+v", msgs)
 	}
 
-	// Starting an SOP from a plain conversation creates the requirement the
-	// user confirmed in the dialog and links it, so later SOPs share it.
-	first := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, base+"/sops", map[string]any{
-		"title": "缓存击穿治理", "workflowIds": []string{"space-be"},
+	// Starting an SOP requires a Work Item that was synced from the external
+	// management platform; the conversation only links it, never creates it.
+	requestJSONAuthed[map[string]any](t, h, owner, http.MethodPost, base+"/sops", map[string]any{
+		"workflowIds": []string{"space-be"},
+	}, http.StatusBadRequest)
+	if err := s.PutIssue(domain.Issue{
+		ID: "iss-work-item", ProjectID: "platform", Title: "缓存击穿治理", Status: "todo", Kind: "issue", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-work-item"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	linked := requestJSONAuthed[spaceView](t, h, owner, http.MethodPost, base+"/requirement", map[string]any{
+		"issueId": "iss-work-item",
 	}, http.StatusCreated)
+	if linked.Requirement == nil || linked.Requirement.ID != "iss-work-item" {
+		t.Fatalf("linking a synced Work Item: %+v", linked.Requirement)
+	}
+	first := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, base+"/sops", map[string]any{
+		"workflowIds": []string{"space-be"},
+	}, http.StatusCreated)
+	t.Cleanup(func() { _ = e.Cancel(first.Task.RunID) })
 	view := requestJSONAuthed[spaceView](t, h, owner, http.MethodGet, base, nil, http.StatusOK)
 	if view.Requirement == nil || view.Requirement.ID != first.Issue.ID || view.Requirement.Title != "缓存击穿治理" {
-		t.Fatalf("first SOP should link its requirement: %+v", view.Requirement)
+		t.Fatalf("first SOP should run on the linked requirement: %+v", view.Requirement)
 	}
 	second := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, base+"/sops", map[string]any{
-		"title": "ignored", "workflowIds": []string{"space-be"},
+		"workflowIds": []string{"space-be-2"},
 	}, http.StatusCreated)
+	t.Cleanup(func() { _ = e.Cancel(second.Task.RunID) })
 	if second.Issue.ID != first.Issue.ID || len(s.Issues()) != issuesBefore+1 {
 		t.Fatalf("later SOPs must reuse the requirement: %s vs %s", second.Issue.ID, first.Issue.ID)
 	}
@@ -265,7 +296,10 @@ func TestConversationRequirementIsExplicit(t *testing.T) {
 	}
 
 	// From the requirements page: an issue without a conversation gets one.
-	if err := s.PutIssue(domain.Issue{ID: "iss-page", ProjectID: "platform", Title: "导出改异步", Status: "todo", Kind: "issue", Source: "local"}); err != nil {
+	if err := s.PutIssue(domain.Issue{
+		ID: "iss-page", ProjectID: "platform", Title: "导出改异步", Status: "todo", Kind: "issue", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-iss-page"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	opened := requestJSONAuthed[spaceView](t, h, owner, http.MethodPost, "/api/spaces", map[string]any{"projectId": "platform", "title": "导出改异步", "issueId": "iss-page"}, http.StatusCreated)
