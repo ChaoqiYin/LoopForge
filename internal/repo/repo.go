@@ -159,6 +159,12 @@ type DeliveryRepo struct {
 	runs    *RunsRepo
 }
 
+// WorkManagementRepo owns Management Connections, their field/status mappings
+// and the External Record event inbox.
+type WorkManagementRepo struct {
+	*deps
+}
+
 // AnalyticsRepo owns the read-only operational analytics view.
 type AnalyticsRepo struct {
 	*deps
@@ -187,6 +193,7 @@ type Store struct {
 	*RunsRepo
 	*RunnersRepo
 	*DeliveryRepo
+	*WorkManagementRepo
 	*AnalyticsRepo
 	*InsightsRepo
 	*PreviewsRepo
@@ -224,6 +231,7 @@ func newStore(db *gorm.DB) *Store {
 	s.RunnersRepo = &RunnersRepo{deps: d, projects: s.ProjectsRepo}
 	s.RunsRepo = &RunsRepo{deps: d, assistant: s.AssistantRepo, issues: s.IssuesRepo, catalog: s.CatalogRepo, runners: s.RunnersRepo, notifications: s.NotificationsRepo}
 	s.DeliveryRepo = &DeliveryRepo{deps: d, issues: s.IssuesRepo, tasks: s.TasksRepo, catalog: s.CatalogRepo, runs: s.RunsRepo}
+	s.WorkManagementRepo = &WorkManagementRepo{deps: d}
 	s.InsightsRepo = &InsightsRepo{deps: d}
 	s.AnalyticsRepo = &AnalyticsRepo{deps: d, runs: s.RunsRepo, catalog: s.CatalogRepo, delivery: s.DeliveryRepo, issues: s.IssuesRepo, tasks: s.TasksRepo, projects: s.ProjectsRepo, insights: s.InsightsRepo}
 	s.PreviewsRepo = &PreviewsRepo{deps: d}

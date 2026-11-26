@@ -132,6 +132,19 @@ func (r *IssuesRepo) Issue(id string) (domain.Issue, bool) {
 	} else {
 		issue.AssigneeUserID = 0
 	}
+	// The payload is authoritative, but physical identity columns keep the
+	// (connection, table, business_key) unique constraint enforceable.
+	if issue.ExternalRef != nil {
+		if row.ConnectionID != nil {
+			issue.ExternalRef.ConnectionID = *row.ConnectionID
+		}
+		if row.TableID != nil {
+			issue.ExternalRef.TableID = *row.TableID
+		}
+		if row.BusinessKey != nil {
+			issue.ExternalRef.BusinessKey = *row.BusinessKey
+		}
+	}
 	return issue, true
 }
 
@@ -343,13 +356,39 @@ func (r *IssuesRepo) prepareIssueForSave(v domain.Issue, fromSync, existingOnly 
 }
 
 func (r *IssuesRepo) writeIssue(v domain.Issue) error {
-	return upsert(r.DB, "issues", issueValues(v))
+	return writeIssueTo(r.DB, v)
+}
+
+// writeIssueTo inserts a new row or updates the existing one by primary key.
+// It deliberately does not use a generic upsert: the issues table also has the
+// (connection, table, business_key) unique index, and ON DUPLICATE KEY UPDATE
+// would edit whichever external work item already owns that key.
+func writeIssueTo(db *gorm.DB, v domain.Issue) error {
+	var count int64
+	if err := db.Model(&issueRow{}).Where("id = ?", v.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	values := issueValues(v)
+	if count > 0 {
+		return db.Model(&issueRow{}).Where("id = ?", v.ID).Updates(values).Error
+	}
+	return db.Table("issues").Create(values).Error
 }
 
 func issueValues(v domain.Issue) map[string]any {
 	ext := ""
+	var connectionID, tableID, businessKey any
 	if v.ExternalRef != nil {
 		ext = v.ExternalRef.ExternalID
+		if value := strings.TrimSpace(v.ExternalRef.ConnectionID); value != "" {
+			connectionID = value
+		}
+		if value := strings.TrimSpace(v.ExternalRef.TableID); value != "" {
+			tableID = value
+		}
+		if value := strings.TrimSpace(v.ExternalRef.BusinessKey); value != "" {
+			businessKey = value
+		}
 	}
 	var assignee any
 	if v.AssigneeUserID > 0 {
@@ -358,7 +397,9 @@ func issueValues(v domain.Issue) map[string]any {
 	return map[string]any{
 		"id": v.ID, "project_id": v.ProjectID, "number": v.Number, "title": v.Title,
 		"status": v.Status, "kind": v.Kind, "source": v.Source, "workflow_id": v.WorkflowID,
-		"assignee_user_id": assignee, "external_id": ext, "payload": mustJSON(v),
+		"assignee_user_id": assignee, "external_id": ext,
+		"connection_id": connectionID, "table_id": tableID, "business_key": businessKey,
+		"payload":    mustJSON(v),
 		"created_at": timePtr(v.CreatedAt), "updated_at": timePtr(v.UpdatedAt),
 	}
 }
