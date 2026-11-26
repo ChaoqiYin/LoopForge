@@ -197,8 +197,8 @@ func (m ManagementStatusMapping) Validate() error {
 }
 
 // ManagementSyncCursor is the connection's reconciliation watermark. The
-// millisecond precision of the platform is not trusted, so IsIncrementalBase
-// only compares whole seconds.
+// platform's date filters only reach whole days, so reconciliation truncates
+// timestamps instead of trusting millisecond filtering.
 type ManagementSyncCursor struct {
 	LastModifiedAt time.Time `json:"lastModifiedAt,omitempty"`
 	FullSyncedAt   time.Time `json:"fullSyncedAt,omitempty"`
