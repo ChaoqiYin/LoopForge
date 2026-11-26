@@ -97,7 +97,8 @@ type Server struct {
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
-	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	workManagement  *workManagementHandlers // work_management.go
+	know            *knowledgeHandlers      // knowledge.go / knowledge_proxy.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -183,6 +184,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		workManagement:  &workManagementHandlers{deps: d, adapter: newFeishuWorkManagementAdapter(s)},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -638,6 +640,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/schedule-jobs/:id/enabled", api.schedule.scheduleJobEnabled)
 	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
 	g.GET("/api/schedule-job-executions/dashboard", api.schedule.scheduleJobExecutionDashboard)
+
+	// --- work management (external work items) ---
+	api.workManagement.register(g)
 
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)
