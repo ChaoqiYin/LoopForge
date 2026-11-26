@@ -65,7 +65,7 @@ func (r *IssuesRepo) PutIssueWithCopiedImages(issue domain.Issue, previousID str
 		return err
 	}
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := upsert(tx, "issues", issueValues(issue)); err != nil {
+		if err := writeIssueTo(tx, issue); err != nil {
 			return err
 		}
 		var images []issueImageRow

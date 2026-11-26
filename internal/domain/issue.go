@@ -196,13 +196,24 @@ type ExternalRef struct {
 	// SourceContentHash records the last imported body so provider adapters can
 	// distinguish a remote edit from a locally clarified requirement.
 	SourceContentHash string    `json:"sourceContentHash,omitempty"`
-	Source            string    `json:"source"`        // gongfeng, tapd
+	Source            string    `json:"source"`        // gongfeng, tapd, feishu_bitable
 	ExternalID        string    `json:"externalId"`    // gongfeng issue id or tapd story id
 	ExternalIID       int       `json:"externalIid"`   // gongfeng issue iid (for URL)
 	ExternalURL       string    `json:"externalUrl"`   // clickable URL
-	ExternalState     string    `json:"externalState"` // opened/closed for gongfeng, etc.
+	ExternalState     string    `json:"externalState"` // external business status snapshot
 	ExternalType      string    `json:"externalType"`  // issue, story
 	SyncedAt          time.Time `json:"syncedAt"`
+	// ConnectionID, TableID and BusinessKey are the Work Item identity for a
+	// Management Connection. BusinessKey is the authoritative unique key;
+	// RecordID is only the platform's current row reference.
+	ConnectionID string `json:"connectionId,omitempty"`
+	TableID      string `json:"tableId,omitempty"`
+	BusinessKey  string `json:"businessKey,omitempty"`
+	RecordID     string `json:"recordId,omitempty"`
+	// Orphaned marks a record deleted in the external platform. Execution
+	// evidence is kept; automatic trigger stops.
+	Orphaned   bool      `json:"orphaned,omitempty"`
+	OrphanedAt time.Time `json:"orphanedAt,omitempty"`
 	// Imported is set for 导入 TAPD / 新建 TAPD. Iteration sync must not
 	// delete these just because they are outside the current TAPD pool.
 	Imported bool `json:"imported,omitempty"`
