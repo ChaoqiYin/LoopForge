@@ -109,30 +109,26 @@ test('drawer uses fresh server restrictions and displays the task that prevents 
   assert.equal(app.router.calls.find(c => c.method === 'DELETE')?.search, '?force=true');
 });
 
-test('bulk selection explains protected rows and escapes server-provided reasons', async t => {
+test('execution center replaces bulk deletion with read-only execution details', async t => {
   const app = await loadApp();
   t.after(app.close);
-  const malicious = '<img src=x onerror=alert(1)>';
-  const issue = { ...blockedIssue, title: malicious, deletionBlock: { code: 'active', reason: malicious } };
+  const issue = { ...blockedIssue, title: '只读工作项', externalRef: { source: 'feishu_bitable', externalId: 'rec-1', externalState: '开发中' } };
+  app.router.get(`/api/issues/${issue.id}`, { issue, comments: [] });
+  app.router.get('/api/issues?formal=1', [issue]);
   app.evaluate(`
-    state.data.issues=[${JSON.stringify(issue)},${JSON.stringify({ ...blockedIssue, id: 'allowed', deletionAllowed: true, deletionBlock: undefined })}];
+    state.data.issues=[${JSON.stringify(issue)}];
     state.projectFilter='';state.issueQuery='';state.issueRunFilter='';state.issueStatusFilter='';state.issueAssigneeFilter='';
-    state.data.tasks=[];state.data.runs=[];state.issueView='table';
-    setIssueSelectionMode(true);
+    state.data.tasks=[];state.data.runs=[];
+    switchView('executions');
   `);
-  const host = app.document.querySelector('#issueBulkActions');
-  const blocked = app.document.querySelector('[data-issue-select="delete-feedback"]');
-  assert.equal(blocked.disabled, true);
-  assert.match(blocked.getAttribute('aria-label'), /onerror/);
-  assert.match(host.querySelector('.issue-bulk-blocked summary').textContent, /1 项不可删除/);
-  assert.equal(host.querySelector('.issue-bulk-blocked p').textContent, malicious);
-  assert.equal(host.querySelector('img'), null);
-  assert.equal(app.document.querySelector('[data-issue-select="allowed"]').disabled, false);
-  host.querySelector('.issue-bulk-blocked summary').click();
-  assert.equal(host.querySelector('.issue-bulk-blocked').open, true);
-  app.document.querySelector('[data-issue-select="allowed"]').click();
-  assert.equal(host.querySelector('.issue-bulk-blocked').open, true, 'selection changes preserve expanded reasons');
-  app.evaluate(`openIssueDetail=(id,tab)=>window.deletionDestination={id,tab}`);
-  host.querySelector('[data-issue-deletion-context]').click();
-  assert.deepEqual(structuredClone(app.evaluate('window.deletionDestination')), { id: issue.id, tab: 'activity' });
+  await settle(4);
+  assert.equal(app.document.querySelector('#issueBulkActions'), null, '批量删除入口已移除');
+  assert.equal(app.document.querySelector('[data-issue-select]'), null);
+  assert.equal(app.document.querySelector('[data-issue-deletion-context]'), null);
+  assert.equal(app.document.querySelector('[data-issue-menu]'), null);
+  const row = app.document.querySelector('.issue-table-row[data-id="' + issue.id + '"]');
+  row.click();
+  await settle(4);
+  assert.equal(app.document.querySelector('#issueDetailDrawer').classList.contains('open'), true);
+  assert.equal(app.router.calls.some(c => c.method === 'DELETE'), false);
 });
