@@ -364,12 +364,12 @@ function applyRequirementComposerDraft(raw){
   renderReqFooter();
 }
 function restoreRequirementComposer(){
+  // Local requirement creation is closed. A draft saved by an older build must
+  // not resurrect the composer or reopen the local editing flow.
   const raw=readRequirementComposerDraft();
-  if(!raw?.open)return false;
-  applyRequirementComposerDraft(raw);
-  $('#requirementModal').classList.add('open');
-  persistRequirementComposer();
-  return true;
+  if(raw)clearRequirementComposer();
+  if(raw?.open)toast('本地建单已关闭：请在外部管理工作台创建 Work Item');
+  return false;
 }
 async function closeRequirementComposer(){
   if(requirementComposerBusy())return toast('正在建单，请稍候');

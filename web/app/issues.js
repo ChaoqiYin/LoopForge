@@ -108,24 +108,96 @@ function issueMatchesQuery(issue,project,query){
   const titleTokens=raw.split(/[\s\p{P}\p{S}]+/u).map(normalizeIssueTitleSearch).filter(Boolean);
   if(normalizedQuery&&normalizedTitle.includes(normalizedQuery))return true;
   if(titleTokens.length&&titleTokens.every(token=>normalizedTitle.includes(token)))return true;
-  const key=`${project?.key||'ISS'}-${issue?.number||''}`,external=issue?.externalRef?.externalId||issue?.externalRef?.externalIid||'';
+  const key=`${project?.key||'ISS'}-${issue?.number||''}`,ref=issue?.externalRef||{};
+  const external=[ref.externalId,ref.externalIid,ref.businessKey,ref.recordId].filter(Boolean).join(' ');
   return `${key} ${title} ${issue?.description||''} ${external}`.toLocaleLowerCase().includes(raw);
+}
+
+function workItemExternalState(i){return String(i?.externalRef?.externalState||'').trim()}
+function workItemExternalKey(i){const r=i?.externalRef||{};return String(r.businessKey||r.externalId||r.recordId||r.externalIid||'').trim()}
+function workItemExternalURL(i){return String(i?.externalRef?.externalUrl||'').trim()}
+function workItemSourceLabel(i){
+  const s=i?.externalRef?.source||i?.source||'';
+  if(s==='feishu_bitable')return '飞书多维表格';
+  if(s==='gongfeng')return '工蜂';
+  if(s==='tapd')return 'TAPD';
+  if(s==='github')return 'GitHub';
+  if(s==='local')return '本地遗留';
+  return s||'外部';
+}
+function workItemSourceTone(i){
+  const s=i?.externalRef?.source||i?.source||'';
+  return s==='feishu_bitable'?'feishu':s==='gongfeng'?'gongfeng':s==='tapd'?'tapd':'neutral';
+}
+function executionStatusLabel(run){
+  if(!run)return '尚未执行';
+  if(run.pauseRequested||run.status==='paused')return '已暂停';
+  return ({queued:'排队中',running:'正在执行',waiting:'等待门禁',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[run.status])||run.status||'—';
+}
+function executionStatusTone(run,workflow){
+  if(!run)return 'neutral';
+  if(run.pauseRequested||run.status==='paused')return 'warn';
+  if(run.status==='waiting')return 'warn';
+  if(run.status==='failed')return 'error';
+  if(run.status==='succeeded')return 'success';
+  if(run.status==='queued')return 'neutral';
+  return 'info';
+}
+function executionRunForIssue(i){
+  const hit=issueExecution(i);
+  return hit?.run||null;
+}
+function executionMatchesStatusFilter(i,filter){
+  const run=executionRunForIssue(i);
+  const stage=issueCurrentStage(i);
+  switch(filter){
+    case 'not_started':return !run;
+    case 'active':return !!run&&['queued','running'].includes(run.status);
+    case 'waiting':return !!run&&run.status==='waiting'||stage.key==='waiting';
+    case 'paused':return !!run&&(run.pauseRequested||run.status==='paused');
+    case 'succeeded':return !!run&&run.status==='succeeded';
+    case 'failed':return !!run&&run.status==='failed';
+    case 'cancelled':return !!run&&run.status==='cancelled';
+    default:return true;
+  }
+}
+function executionAgentLabel(i,run,workflow){
+  const agentId=(workflow?.nodes||[]).find(n=>n.id===run?.currentNodeId)?.agentId||i.assigneeId;
+  const agent=(state.data.agents||[]).find(a=>a.id===agentId);
+  if(agent)return agent.name||agent.id;
+  if(i.assigneeType==='agent'&&i.assigneeId)return `Agent ${i.assigneeId}`;
+  if(i.externalAssignee)return String(i.externalAssignee);
+  return '未指定';
+}
+function executionRecentLabel(run){
+  if(!run)return '—';
+  const at=run.finishedAt||run.startedAt||run.createdAt;
+  return at?relativeTime(at):'—';
 }
 
 function filteredIssues(){
   const projects=state.data.projects||[];
   let issues=(state.data.issues||[]).filter(i=>!state.projectFilter||i.projectId===state.projectFilter);
-  if(state.sourceFilter)issues=issues.filter(i=>(i.source||'local')===state.sourceFilter);
-  if(state.issueStatusFilter)issues=issues.filter(i=>issueMatchesStatusFilter(i,state.issueStatusFilter));
+  if(state.sourceFilter)issues=issues.filter(i=>(i.externalRef?.source||i.source||'local')===state.sourceFilter);
+  if(state.issueStatusFilter){
+    if(state.issueStatusFilter.startsWith('ext:')){
+      const want=decodeURIComponent(state.issueStatusFilter.slice(4));
+      issues=issues.filter(i=>workItemExternalState(i)===want);
+    }else issues=issues.filter(i=>issueMatchesStatusFilter(i,state.issueStatusFilter));
+  }
   if(state.issueAssigneeFilter){
     if(state.issueAssigneeFilter==='unassigned'){
-      issues=issues.filter(i=>!i.assigneeUserId&&!i.assigneeId&&!(i.sopBindings||[]).some(b=>b.assigneeUserId));
+      issues=issues.filter(i=>!String(i.externalAssignee||'').trim()&&!i.assigneeUserId&&!i.assigneeId&&!(i.sopBindings||[]).some(b=>b.assigneeUserId));
+    }else if(state.issueAssigneeFilter.startsWith('ext:')){
+      const want=decodeURIComponent(state.issueAssigneeFilter.slice(4));
+      issues=issues.filter(i=>String(i.externalAssignee||'')===want);
     }else{
       issues=issues.filter(i=>String(i.assigneeUserId)===state.issueAssigneeFilter||String(i.assigneeId)===state.issueAssigneeFilter||(i.sopBindings||[]).some(b=>String(b.assigneeUserId)===state.issueAssigneeFilter));
     }
   }
   if(state.issueRunFilter==='mr')issues=issues.filter(i=>pendingDeliveryMRCount(i)>0);
-  else if(state.issueRunFilter)issues=issues.filter(i=>issueRunHealth(i)===state.issueRunFilter);
+  else if(['attention','closed'].includes(state.issueRunFilter))issues=issues.filter(i=>issueRunHealth(i)===state.issueRunFilter);
+  else if(state.issueRunFilter)issues=issues.filter(i=>executionMatchesStatusFilter(i,state.issueRunFilter));
   if(state.issueQuery){
     issues=issues.filter(i=>issueMatchesQuery(i,projects.find(x=>x.id===i.projectId),state.issueQuery));
   }
@@ -133,7 +205,96 @@ function filteredIssues(){
   return [...issues].sort((a,b)=>issueHealthRank(a)-issueHealthRank(b)||(priority[a.priority]??4)-(priority[b.priority]??4)||(b.number||0)-(a.number||0));
 }
 
+function executionRow(i){
+  const {project:p,run,workflow:w}=issueExecution(i);
+  const extState=workItemExternalState(i)||'未同步';
+  const url=workItemExternalURL(i);
+  const extKey=workItemExternalKey(i)||'—';
+  const currentRun=run;
+  const stage=issueCurrentStage(i);
+  const statusLabel=executionStatusLabel(currentRun);
+  const statusTone=executionStatusTone(currentRun,w);
+  const sop=issueWithoutSOP(i)?'不使用 SOP':(w?.name||i.workflowId||'未关联');
+  const agent=executionAgentLabel(i,currentRun,w);
+  const extBadge=`<span class="hui-badge" data-size="sm" data-tone="${extState==='未同步'?'neutral':'accent'}"><span class="hui-badge-label">${escapeHTML(extState)}</span></span>`;
+  const runBadge=`<span class="hui-badge" data-size="sm" data-tone="${statusTone}">${currentRun?.status==='running'?'<span class="hui-lamp" aria-hidden="true"><i></i></span>':''}<span class="hui-badge-label">${escapeHTML(statusLabel)}</span></span>`;
+  const runCell=currentRun?`<button type="button" class="execution-run-link" data-open-execution-run="${escapeHTML(currentRun.id)}" title="打开运行详情">${escapeHTML(currentRun.id.slice(-8))}</button>`:'—';
+  const safeExternal=url?safeURL(url):'';
+  const keyCell=safeExternal?`<a class="issue-key-cell execution-external-key" href="${escapeHTML(safeExternal)}" target="_blank" rel="noopener noreferrer" title="在外部平台打开">${escapeHTML(extKey)}</a>`:`<span class="issue-key-cell execution-external-key" title="${escapeHTML(extKey)}">${escapeHTML(extKey)}</span>`;
+  const externalLink=safeExternal?`<a class="button ghost small" href="${escapeHTML(safeExternal)}" target="_blank" rel="noopener noreferrer">打开外部</a>`:'';
+  return `<div class="issue-table-row execution-row" role="row" data-id="${escapeHTML(i.id)}">
+    <div class="execution-key-cell">${keyCell}</div>
+    <div class="issue-title-cell">${issueTitleMarkup(i.title)}</div>
+    <div class="issue-source-cell"><span class="issue-source-chip tone-${workItemSourceTone(i)}">${escapeHTML(workItemSourceLabel(i))}</span></div>
+    <div class="execution-state-cell">${extBadge}</div>
+    <div class="issue-stage-cell ${stage.key}" title="${escapeHTML(stage.hint||'')}">${runBadge}</div>
+    <div class="execution-sop-cell"><b>${escapeHTML(sop)}</b><span>${escapeHTML(agent)}</span></div>
+    <div class="execution-run-cell">${runCell}</div>
+    <div class="execution-recent-cell">${escapeHTML(executionRecentLabel(currentRun))}</div>
+    <div class="issue-actions-cell">${externalLink}<button type="button" class="button ghost small" data-open-execution="${escapeHTML(i.id)}">执行详情</button></div>
+  </div>`;
+}
+
+function renderExternalStatusOptions(issues){
+  const sel=$('#issueStatusFilter');if(!sel)return;
+  const current=state.issueStatusFilter||'';
+  const states=[...new Set((issues||[]).map(workItemExternalState).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  sel.innerHTML='<option value="">全部外部状态</option>'+states.map(state=>`<option value="ext:${encodeURIComponent(state)}">${escapeHTML(state)}</option>`).join('');
+  sel.value=current;
+}
+
+function renderExternalAssigneeOptions(issues){
+  const sel=$('#issueAssigneeFilter');if(!sel)return;
+  const current=state.issueAssigneeFilter||'';
+  const names=[...new Set((issues||[]).map(i=>String(i.externalAssignee||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  const unassigned=(issues||[]).filter(i=>!String(i.externalAssignee||'').trim()).length;
+  sel.innerHTML=`<option value="">全部外部负责人</option><option value="unassigned">未指定负责人${unassigned?`（${unassigned}）`:''}</option>`+names.map(name=>`<option value="ext:${encodeURIComponent(name)}">${escapeHTML(name)}</option>`).join('');
+  sel.value=current;
+}
+
+function renderExecutionCenterView(){
+  const projectIssues=(state.data.issues||[]).filter(i=>!state.projectFilter||i.projectId===state.projectFilter);
+  renderProjectContext(projectIssues);
+  renderExternalStatusOptions(projectIssues);
+  renderExternalAssigneeOptions(projectIssues);
+  const issues=filteredIssues();
+  const paged=paginateList('issues',issues);
+  const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
+  const board=$('#issueBoard');
+  board.classList.remove('kanban-mode');
+  board.innerHTML=`<div class="issue-table-card execution-table-card"><div class="issue-table-scroll"><div class="issue-table execution-table" data-page-anchor="issues">
+    <div class="issue-table-row issue-table-head execution-table-head" role="row"><span>外部 ID</span><span>外部标题</span><span>来源</span><span>外部业务状态</span><span>内部执行状态</span><span>当前 SOP / Agent</span><span>当前 Run</span><span>最近执行</span><span>操作</span></div>
+    <div class="issue-table-body">${paged.items.map(executionRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>暂无已同步的 Work Item</b><p>在外部管理工作台创建或修改记录后，会同步到执行中心。</p></div>`}</div>
+  </div></div>${pager}</div>`;
+  board.querySelectorAll('.execution-row[data-id]').forEach(el=>{
+    el.onclick=e=>{
+      if(e.target.closest('a,button'))return;
+      openIssueDetail(el.dataset.id);
+    };
+  });
+  board.querySelectorAll('[data-open-execution]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();openIssueDetail(btn.dataset.openExecution)});
+  board.querySelectorAll('[data-open-execution-run]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();openRunFromId(btn.dataset.openExecutionRun,{forceRuns:true})});
+  bindPager(board);
+}
+
+let refreshExecutionPending=null;
+async function refreshExecutionCenter(reload=true){
+  if(!reload){renderExecutionCenterView();return}
+  if(refreshExecutionPending)return refreshExecutionPending;
+  refreshExecutionPending=(async()=>{
+    try{
+      const opt={silent:true};
+      const [issues,tasks,runs]=await Promise.all([api('/api/issues?formal=1',opt),api('/api/tasks',opt),api('/api/runs',opt)]);
+      state.data.issues=issues||[];state.data.tasks=tasks||[];state.data.runs=runs||[];
+      updateApprovalBadge();renderExecutionCenterView();
+    }catch(e){toast(e.message,'err')}
+    finally{refreshExecutionPending=null}
+  })();
+  return refreshExecutionPending;
+}
+
 function renderIssues(){
+  if(state.currentView==='executions'){renderExecutionCenterView();return}
   const tapdImport=document.querySelector("#importTAPDIssue");if(tapdImport)tapdImport.hidden=!currentProject()?.tapdWorkspaceId;
   watchClarifyingIssues();
   const projectIssues=(state.data.issues||[]).filter(i=>!state.projectFilter||i.projectId===state.projectFilter);

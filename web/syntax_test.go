@@ -1172,15 +1172,18 @@ func TestTAPDImportUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(html)
-	for _, want := range []string{`id="importTAPDIssue"`, `id="dashImportTAPD"`, `id="importTAPDModal"`, `id="importTAPDURL"`, `id="importTAPDWorkflow"`, `id="importTAPDRepository"`, `代码仓库（可多选）`, `repo-picker`} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("UI is missing %q", want)
+	// Local requirement import/creation entries are gone. The compatibility
+	// TAPD helper markup may remain for older deep links, but no visible entry
+	// may call it from the execution center or the overview.
+	for _, gone := range []string{`id="importTAPDIssue"`, `id="dashImportTAPD"`, `id="dashNewRequirement"`, `id="newIssue"`} {
+		if strings.Contains(page, gone) {
+			t.Fatalf("本地需求入口必须移除，仍存在 %q", gone)
 		}
 	}
-	dashImport := strings.Index(page, `id="dashImportTAPD"`)
-	dashNew := strings.Index(page, `id="dashNewRequirement"`)
-	if dashImport < 0 || dashNew < 0 || dashImport > dashNew {
-		t.Fatal("工作总览 must place 导入 TAPD to the left of 新建需求")
+	for _, want := range []string{`id="importTAPDModal"`, `id="importTAPDURL"`, `id="importTAPDWorkflow"`, `id="importTAPDRepository"`, `代码仓库（可多选）`, `repo-picker`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("compatibility import markup is missing %q", want)
+		}
 	}
 	projectGroup := strings.Index(page, `<p>项目</p>`)
 	flowGroup := strings.Index(page, `<p>流程与任务</p>`)
@@ -1466,8 +1469,8 @@ func TestIssueTitleFuzzySearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(html), "模糊搜索标题") {
-		t.Fatal("issue list must advertise title fuzzy search")
+	if !strings.Contains(string(html), "搜索外部标题") {
+		t.Fatal("execution center must advertise external title search")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -1614,12 +1617,12 @@ func TestIssueFilterAndManualCloseUI(t *testing.T) {
 	for _, want := range []string{
 		`id="issueStatusFilter"`,
 		`id="issueAssigneeFilter"`,
-		`<option value="backlog">待规划</option>`,
-		`<option value="todo">待处理 / 待执行</option>`,
-		`<option value="done">已完成</option>`,
-		`<option value="closed">已关闭</option>`,
+		`<option value="not_started">尚未执行</option>`,
+		`<option value="active">正在执行</option>`,
+		`<option value="succeeded">已完成</option>`,
+		`<option value="failed">失败</option>`,
 		`data-dtab="operations"`,
-		`未指定责任人`,
+		`未指定负责人`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index.html is missing %q", want)
@@ -2436,41 +2439,30 @@ runs['run-1'] = waiting;
 const html = approvalCardHTML(waiting);
 const head = between(html, 'class="ap-card-head"', 'class="ap-body"');
 const side = between(html, 'class="ap-side"', 'class="ap-body"');
-const body = html.slice(html.indexOf('class="ap-body"'));
 assert.match(side, /data-open-issue="iss-1"/);
-assert.match(side, /class="ap-more-menu" role="menu" hidden/);
-assert.match(between(side, 'class="ap-more-menu"', '</div>'), /data-cancel-run="run-1"/);
-assert.match(side, /data-ap-more[^>]*aria-haspopup="menu" aria-expanded="false"/);
-assert.ok(!body.includes('data-cancel-run'), 'cancel lives in the ⋯ menu, not the body');
-assert.match(body, /data-approve="run-1"/);
-assert.ok(!head.includes('data-approve'), 'decision buttons stay in the body');
+assert.ok(!html.includes('class="ap-more-menu"'), '审批中心不提供 ⋯ 操作菜单');
+assert.ok(!html.includes('data-cancel-run'), '审批中心不提供取消流程');
+assert.ok(!html.includes('data-approve'));
+assert.ok(!html.includes('data-reject'));
+assert.ok(!html.includes('data-retry-node'));
+assert.ok(!html.includes('data-human-context'));
 assert.match(head, /class="hui-badge" data-tone="warn"/);
 assert.match(head, /data-icon="pending-review"/);
 assert.match(head, /<code class="ap-key">AF-31<\/code>/);
 assert.match(head, /卡在「confirm-brief」/);
+assert.match(head, /只读/);
 const paused = {id:'run-2', status:'waiting', pauseRequested:true, workflowSnapshot:{nodes:[node]}, nodes:{gate:{status:'waiting_approval', activity:'用户暂停'}}};
 runs['run-2'] = paused;
 const pausedHTML = approvalCardHTML(paused);
 assert.match(pausedHTML, /class="hui-badge" data-tone="neutral"[^>]*><svg[^>]*data-icon="pause"/);
 assert.match(pausedHTML, /已暂停/);
 assert.match(pausedHTML, /data-open-logs="run-2"/);
-assert.match(pausedHTML, /class="ap-body"><div class="approval-callout paused-run-callout"/);
+assert.ok(!pausedHTML.includes('data-approve'));
 const queued = {id:'run-3', status:'queued', workflowSnapshot:{nodes:[node]}, nodes:{}};
 runs['run-3'] = queued;
 const queuedHTML = approvalCardHTML(queued);
-assert.ok(!queuedHTML.includes('ap-body'), 'queued runs have no decision body');
-assert.match(queuedHTML, /data-cancel-run="run-3"/);
-state.approvalItems=[waiting,{id:'run-4',status:'waiting',workflowSnapshot:{nodes:[node]},nodes:{gate:{status:'waiting_approval'}}}];
-assert.match(approvalCardHTML(waiting), /data-ap-select="run-1"/);
-assert.ok(!pausedHTML.includes('data-ap-select'), 'paused runs are not batch-selectable');
-const batchBar=approvalBatchBarHTML(state.approvalItems);
-assert.match(batchBar, /data-ap-select-all/);
-assert.match(batchBar, /批量通过/);
-assert.match(batchBar, /data-ap-batch-approve disabled/);
-approvalSelection().add(approvalKey('run-1','gate'));
-const selectedBar=approvalBatchBarHTML(state.approvalItems);
-assert.match(selectedBar, /已选 1 条/);
-assert.match(selectedBar, /data-ap-batch-approve>/);
+assert.ok(!queuedHTML.includes('data-approve'));
+assert.ok(!queuedHTML.includes('data-cancel-run'));
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
@@ -2484,8 +2476,9 @@ func TestApprovalsStylesheetStaysScopedToHarnessTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	links := regexp.MustCompile(`<link rel="stylesheet" href="([^"?]+)`).FindAllStringSubmatch(string(html), -1)
-	if len(links) == 0 || links[len(links)-1][1] != "/app/approvals-harness.css" {
-		t.Fatalf("/app/approvals-harness.css must load after every other stylesheet, got %v", links)
+	if len(links) == 0 || links[len(links)-1][1] != "/app/external-work.css" ||
+		len(links) < 2 || links[len(links)-2][1] != "/app/approvals-harness.css" {
+		t.Fatalf("/app/external-work.css must load last, after /app/approvals-harness.css; got %v", links)
 	}
 	css, err := os.ReadFile("app/approvals-harness.css")
 	if err != nil {
@@ -2562,15 +2555,15 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 		t.Fatal("#platformRail must sit before .platform-sidebar in DOM")
 	}
 
-	// 2. 左侧小栏只留 4 个日常入口和设置；流程模板、运行记录、定时任务收进设置导航。
-	for _, view := range []string{"collaboration", "observability", "issues", "approvals", "settings"} {
+	// 2. 左侧小栏只留明确的日常工作入口：工作总览、执行中心、审批中心、统计分析、设置。
+	for _, view := range []string{"collaboration", "executions", "approvals", "observability", "settings"} {
 		needle := `data-view="` + view + `"`
 		sub := page[railIdx:sidebarIdx]
 		if !strings.Contains(sub, needle) {
 			t.Fatalf("#platformRail must contain %s nav button", needle)
 		}
 	}
-	for _, view := range []string{"sops", "runs", "aiSchedules"} {
+	for _, view := range []string{"sops", "runs", "aiSchedules", "agents", "systemConfig", "repositories"} {
 		needle := `data-view="` + view + `"`
 		if strings.Contains(page[railIdx:sidebarIdx], needle) {
 			t.Fatalf("#platformRail must not contain %s; it lives in the settings navigation", needle)
@@ -2579,25 +2572,23 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 			t.Fatalf("settings navigation must contain %s", needle)
 		}
 	}
-	// 图标栏第 2 位仍是统计；需求列表紧跟其后，两者都是日常工作入口。
+	if strings.Contains(page, `data-view="issues"`) {
+		t.Fatal("旧需求列表入口必须移除")
+	}
 	railNav := page[railIdx:sidebarIdx]
-	if !strings.Contains(railNav, `data-view="issues" data-tooltip="需求列表" aria-label="需求列表"`) {
-		t.Fatal("#platformRail must contain the issues entry labelled 需求列表")
+	if !strings.Contains(railNav, `data-view="executions" data-tooltip="执行中心" aria-label="执行中心"`) {
+		t.Fatal("#platformRail must contain the execution center entry")
 	}
-	if !strings.Contains(railNav, `data-view="observability" data-tooltip="统计" aria-label="统计"`) {
-		t.Fatal("#platformRail observability button must be labelled 统计")
+	if !strings.Contains(railNav, `data-view="observability" data-tooltip="统计分析" aria-label="统计分析"`) {
+		t.Fatal("#platformRail observability button must be labelled 统计分析")
 	}
-	if strings.Index(railNav, `data-view="observability"`) > strings.Index(railNav, `data-view="issues"`) {
-		t.Fatal("统计 must stay before 需求列表 in #platformRail")
-	}
-	if strings.Index(railNav, `data-view="issues"`) > strings.Index(railNav, `data-view="approvals"`) {
-		t.Fatal("需求列表 must sit before 待我确认 in #platformRail")
-	}
-	if strings.Index(railNav, `data-view="observability"`) > strings.Index(railNav, `data-view="approvals"`) {
-		t.Fatal("统计 must sit before 待我确认 in #platformRail")
+	if !(strings.Index(railNav, `data-view="collaboration"`) < strings.Index(railNav, `data-view="executions"`) &&
+		strings.Index(railNav, `data-view="executions"`) < strings.Index(railNav, `data-view="approvals"`) &&
+		strings.Index(railNav, `data-view="approvals"`) < strings.Index(railNav, `data-view="observability"`)) {
+		t.Fatal("rail order must be 工作总览 → 执行中心 → 审批中心 → 统计分析")
 	}
 	if strings.Contains(page[sidebarIdx:], `data-view="observability"`) {
-		t.Fatal("settings navigation must not duplicate the 统计 entry")
+		t.Fatal("settings navigation must not duplicate the 统计分析 entry")
 	}
 	if !strings.Contains(page[sidebarIdx:], `data-view="runners"`) {
 		t.Fatal("settings navigation must contain the runners entry")
@@ -2666,8 +2657,8 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	appJs := string(appJsBytes)
-	if !strings.Contains(appJs, "const noSidebarViews = ['issues', 'approvals', 'observability'];") {
-		t.Fatal("app.js must hide the sidebar on the rail-only pages: 需求列表, 待我确认, 统计")
+	if !strings.Contains(appJs, "const noSidebarViews = ['executions', 'approvals', 'observability'];") {
+		t.Fatal("app.js must hide the sidebar on the rail-only pages: 执行中心, 审批中心, 统计分析")
 	}
 	managed := appJs[strings.Index(appJs, "const settingsManagementViews="):]
 	managed = managed[:strings.Index(managed, "\n")]
@@ -2679,15 +2670,15 @@ func TestCodexStyleLeftMiniRailLayout(t *testing.T) {
 			t.Fatalf("%s moved into the settings sidebar and must enter settings management mode", view)
 		}
 	}
-	if !strings.Contains(appJs, "observability:'统计'") {
-		t.Fatal("viewTitles.observability must be 统计")
+	if !strings.Contains(appJs, "observability:'统计分析'") {
+		t.Fatal("viewTitles.observability must be 统计分析")
 	}
 	accessBytes, err := Files.ReadFile("app/access.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	access := string(accessBytes)
-	for _, want := range []string{"['observability','统计','用量分析 · Token 与质量']", "['issues','需求列表'"} {
+	for _, want := range []string{"['observability','统计分析','用量分析 · Token 与质量']", "['executions','执行中心','查看外部工作项与内部执行状态']"} {
 		if !strings.Contains(access, want) {
 			t.Fatalf("command palette is missing %q", want)
 		}
@@ -2702,7 +2693,7 @@ func TestApprovalBadgeRefreshesOutsideApprovals(t *testing.T) {
 		}
 		return string(data)
 	}
-	if !strings.Contains(read("app.js"), "switchView(view);\n  settleBootLoader();\n  if(!['approvals','issues','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
+	if !strings.Contains(read("app.js"), "switchView(view);\n  settleBootLoader();\n  if(!['approvals','executions','runs','sops'].includes(state.currentView))preloadApprovalBadge();") {
 		t.Fatal("boot must preload the approval badge when the first view does not fetch runs")
 	}
 	if !strings.Contains(read("app/approvals.js"), "async function preloadApprovalBadge(){try{const runs=await api('/api/runs',{silent:true});") {

@@ -470,6 +470,21 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 - 悬停只加深阴影（紫调 `0 12px 28px -16px`）并换强边框，显式覆盖 product-v3 / v4 / sops.css 的 `translateY`；键盘焦点为强调色边框 + 3px 淡紫外圈。主操作与「⋯」带 `data-hover-ink-control`，由 `hover-ink.js` 驱动落点 ink。
 - 减少动态效果时控制器跳过入场、FLIP 与退出节点，CSS 同时关闭卡片内动画、过渡和呼吸点。
 
+## 外部工作事项
+
+正式工作事项由外部管理工作台（首期飞书多维表格）维护，LoopForge 只提供投影与执行视图。导航按「工作总览 / 执行中心 / 审批中心 / 统计分析」放在左侧图标栏；SOP、Agent、代码仓库、系统配置收进设置导航。旧的本地需求列表、新建、导入与编辑入口全部移除。
+
+| 区域 | 约定 |
+| --- | --- |
+| 执行中心（`#issuesView`，路由 `#/executions`） | 页头为 H1「执行中心」和一句说明，右侧只有刷新与「连接与映射」；表格列为外部 ID、外部标题、来源、外部业务状态、内部执行状态、当前 SOP / Agent、当前 Run、最近执行、操作。行内不提供编辑、关闭、删除、拖拽看板或批量选择 |
+| 执行详情 | 复用 `#issueDetailDrawer`；概览顶部先展示外部 ID、外部业务状态、内部执行状态、来源、当前 Agent、最近执行和外部记录链接，内容只读 |
+| 审批中心（`#approvalsView`） | H1「审批中心」+「只读视图」说明；先展示「外部待审批」面板（标题链接回外部记录、「去外部平台处理」），再展示「内部执行门禁」。两张区域都不渲染通过、退回、重试、取消或批量审批按钮；执行门禁仍可在运行详情处理 |
+| 系统配置（`#systemConfigView`，设置导航） | 三块面板：连接配置（飞书应用、Base、表、默认项目、启用、允许回写）、字段映射（必填业务唯一键 / 标题 / 状态）、状态映射（外部状态 → 启动 SOP / 忽略 / 暂停 / 取消 / 重启 / 回写）。操作仅有保存、连接自检、立即同步、删除 |
+| 代码仓库（`#repositoriesView`，设置导航） | 按当前项目列出仓库面板：默认分支、集成分支、关联项目、仓库级服务凭证列表与新增表单、保存与「测试连接」；测试连接只做本地配置完整性检查，不发起跨域 Git 请求 |
+| 样式 | `web/app/external-work.css` 只引用 `--hui-*` 令牌；面板、徽标、输入、按钮与其它设置页一致，不新增页面私有设计变量 |
+
+内部执行状态是派生值：由 Run 状态（排队 / 执行 / 等待门禁 / 暂停 / 完成 / 失败 / 取消）和 SOP 阶段实时计算，不写入外部业务状态。临时 Run（`origin` 非空）在运行记录中带「临时 Run」标记，并可与正式 Run 分开筛选；执行中心只请求 `formal=1`。
+
 ## 实现位置
 
 | 位置 | 职责 |
@@ -486,7 +501,10 @@ AI 助手页（`#assistantView`，路由 `#/assistant`）在设置导航「管�
 | `useLocalConversations.js`、`session-status.js`、`session-unread.js` | 本地会话隔离、真实回复状态与未读标记展示 |
 | `web/app/hover-ink.*`、`web/app/sliding-tabs.*` | 两套页面共用的悬停和标签页行为 |
 | `web/app/harness-ui.css` | 唯一设计规范：`--hui-*` 令牌、按钮、Status Badge、面板、输入、Selector 与菜单、设置区旧令牌映射和 1200px 外层容器 |
-| `web/app/issues-list.css` | 需求列表页独有的操作列、看板与响应式样式 |
+| `web/app/issues-list.css` | 执行中心沿用的表格基础样式；执行中心列布局与只读细节在 `external-work.css` |
+| `web/app/external-work.css` | 执行中心表格、只读审批中心、系统配置与代码仓库面板的 Harness 样式 |
+| `web/app/system-config.js` | 外部连接、自检、字段/状态映射与立即同步 |
+| `web/app/repositories.js` | 仓库默认分支、关联项目、服务凭证与配置自检 |
 | `web/app/approvals.js`、`web/app/approvals-harness.css` | 待我确认页的卡片外壳（`approvalCardHTML`）、状态标签、⋯ 菜单交互与 Harness 样式 |
 | `web/app/hui-select.js` | Harness Selector（原地与触发器两种模式），以及共用的 `HuiPopover`（浮层互斥与定位）和 `HuiAuto`（自动增强与移除清理） |
 | `web/app/business-domains.js`、`web/app/business-harness.css` | 业务领域报表页的模板（`businessReportHTML`）、图表 option（`businessDeliveryOption` 等）、`biz-` 图表挂载与释放、静态 SVG 导出与 Harness 样式 |

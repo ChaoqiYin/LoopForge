@@ -298,7 +298,8 @@ function runRowHTML(r,workflows){
   const progress=group?'<div class="run-row-progress is-empty">—</div>':`<div class="run-row-progress"><span class="run-progress-text">${p.done}/${p.total}</span><div class="run-progress tone-${runStatusTone(r)}"><i style="width:${p.pct}%"></i></div></div>`;
   const time=group?'<span class="run-row-time"></span>':`<span class="run-row-time" title="${escapeHTML(runTimingTitle(r))}">${runElapsed(r)}</span>`;
   const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
-  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot(group?'chat':'workflow',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${r.workflowSnapshot?.generic?'<span class="run-chip">通用</span>':''}${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span>${progress}${time}<div class="run-row-actions">${actions}</div></div>`;
+  const originChip=r.origin?'<span class="run-chip run-chip-temporary" title="临时探索 Run：不进入正式交付与统计">临时 Run</span>':'<span class="run-chip run-chip-formal" title="正式 Work Item 运行">正式</span>';
+  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot(group?'chat':'workflow',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${originChip}${r.workflowSnapshot?.generic?'<span class="run-chip">通用</span>':''}${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span>${progress}${time}<div class="run-row-actions">${actions}</div></div>`;
 }
 function renderRunFilterCounts(base){
   const counts=Object.fromEntries(RUN_FILTER_KEYS.map(k=>[k,0]));
@@ -313,7 +314,12 @@ function renderRunFilterCounts(base){
 }
 function renderRuns(){
   renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 SOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
-  let base=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
+  // Formal runs are SOP runs. Temporary exploration runs are surfaced here too
+  // (they are excluded from SOP counts and analytics) so history stays visible.
+  const originRuns=(state.data.runs||[]).filter(r=>!!r.origin||isSOPRun(r));
+  let base=sortRunsDescending(scopedRuns(originRuns));
+  if(state.runOriginFilter==='temporary')base=base.filter(r=>!!r.origin);
+  else if(state.runOriginFilter==='formal')base=base.filter(r=>!r.origin);
   if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
   if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
   renderRunFilterCounts(base);
@@ -321,7 +327,7 @@ function renderRuns(){
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');
   const focusedRow=document.activeElement?.closest?.('#runList .run-card'),focusedPart=focusedRow&&['.run-view-btn','.run-del-btn'].find(s=>document.activeElement.matches(s));
   const pagedRuns=paginateList('runs', runs);
-  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到需求列表查看对应需求的执行结果。</p></div>`;
+  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到执行中心查看对应工作项的执行结果。</p></div>`;
   const pager=$('#runPager');
   pager.innerHTML=`<span class="run-total">共 ${runs.length} 条</span>${pagerHTML('runs', pagedRuns)}`;
   hydrateRunIcons($('#runsView'));

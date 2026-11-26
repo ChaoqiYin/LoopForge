@@ -529,3 +529,23 @@ Object.assign(window.LF_I18N_EN, {
   "AI 根据任务和命名要求生成完整的分支名。": "AI uses the task and naming instructions to generate the full branch name.",
   "请输入自定义前缀，或选择无前缀": "Enter a custom prefix or choose No prefix",
 });
+
+Object.assign(window.LF_I18N_EN, {
+  "工作总览": "Overview",
+  "执行中心": "Execution center",
+  "审批中心": "Approval center",
+  "统计分析": "Analytics",
+  "系统配置": "System settings",
+  "代码仓库": "Repositories",
+  "外部工作事项": "External work",
+  "连接与映射": "Connections & mappings",
+  "SOP": "SOP",
+  "Agent": "Agents",
+  "外部平台维护标题与业务状态，LoopForge 展示执行状态、当前 SOP / Agent 与最近运行。工作项只读，内容修改请回到外部平台。": "The external platform owns the title and business status. LoopForge shows execution status, the current SOP / Agent, and recent runs. Work Items are read-only; edit them in the external platform.",
+  "配置唯一的飞书多维表格连接、字段与状态映射，并在此自检或立即同步。允许回写默认关闭。": "Configure the single Feishu Bitable connection, field and status mappings, then self-check or sync now. Writeback is off by default.",
+  "为当前项目的代码仓库配置加密服务凭证、默认分支与关联项目；执行时优先使用仓库级凭证。": "Configure encrypted service credentials, default branches, and associated projects for this project's repositories. Repository-level credentials take priority during execution.",
+  "业务审批在外部平台完成，这里只展示外部待审批事项与 LoopForge 内部执行门禁；不提供审批操作。": "Business approvals happen in the external platform. This read-only view lists external pending approvals and internal execution gates; it offers no approval actions.",
+  "只读视图": "Read-only view",
+  "外部待审批": "External pending approvals",
+  "内部执行门禁": "Internal execution gates",
+});

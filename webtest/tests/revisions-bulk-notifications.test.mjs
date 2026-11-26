@@ -52,34 +52,27 @@ test('flow history merges edits and supports undo, redo, clear, and workflow reb
   assert.equal(result.afterClear, false);
 });
 
-test('issue bulk selection synchronizes filters, page checkboxes, clear and failure summaries', async (t) => {
+test('execution center removes local bulk selection entries', async (t) => {
   const app = await loadApp();
   t.after(app.close);
+  const issues = [
+    {id:'bulk-1',title:'Work item one',projectId:'project-1',status:'backlog',source:'feishu_bitable',externalRef:{source:'feishu_bitable',externalId:'rec-1',externalState:'开发中'}},
+    {id:'bulk-2',title:'Work item two',projectId:'project-1',status:'todo',source:'feishu_bitable',externalRef:{source:'feishu_bitable',externalId:'rec-2',externalState:'待排期'}}
+  ];
+  app.router.get('/api/issues?formal=1', issues);
   app.evaluate(`
-    state.data.issues=[
-      {id:'bulk-1',title:'Delete one',projectId:state.projectFilter,status:'backlog',source:'local',deletionAllowed:true},
-      {id:'bulk-2',title:'Delete two',projectId:state.projectFilter,status:'backlog',source:'gongfeng',deletionAllowed:true},
-      {id:'bulk-3',title:'Running',projectId:state.projectFilter,status:'in_progress',source:'local'}
-    ];
-    state.issueSelection=new Set();state.issueView='table';setIssueSelectionMode(true);
-    renderIssues();
+    state.data.issues=${JSON.stringify(issues)};
+    state.issueSelection=new Set();state.issueSelectionMode=true;
+    switchView('executions');
   `);
-  const first = app.document.querySelector('[data-issue-select="bulk-1"]');
-  first.checked = true;
-  first.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  const all = app.document.querySelector('[data-issue-select-page]');
-  all.checked = true;
-  all.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  assert.ok(app.evaluate(`state.issueSelection.size`) >= 2);
-  app.evaluate(`
-    state.issueBulkDeleteResult={deleted:1,failures:[{id:'bulk-2',title:'Delete two',message:'conflict'}]};
-    renderIssueBulkActions(filteredIssues());
-  `);
-  assert.match(app.document.querySelector('#issueBulkActions').textContent, /conflict|未删除/);
-  app.document.querySelector('[data-issue-clear-selection]').click();
-  assert.equal(app.evaluate(`state.issueSelection.size`), 0);
-  app.document.querySelector('[data-issue-cancel-selection]').click();
-  assert.equal(app.evaluate(`state.issueSelectionMode`), false);
+  await settle(4);
+  assert.equal(app.document.querySelector('#startIssueSelection'), null, '批量操作入口已移除');
+  assert.equal(app.document.querySelector('#issueBulkActions'), null);
+  assert.equal(app.document.querySelectorAll('[data-issue-select]').length, 0);
+  assert.equal(app.document.querySelectorAll('[data-issue-select-page]').length, 0);
+  assert.equal(app.document.querySelectorAll('.kanban-card').length, 0, '执行中心不提供本地拖拽看板');
+  assert.match(app.document.querySelector('#issueBoard').textContent, /Work item one/);
+  assert.equal(app.router.calls.some((c) => c.method === 'DELETE' || (c.method === 'PUT' && c.path === '/api/issues')), false);
 });
 
 test('notification editors load bots, add bindings, choose presets, insert variables, preview, and remove', async (t) => {
@@ -121,44 +114,20 @@ test('notification editors load bots, add bindings, choose presets, insert varia
   assert.match(host.textContent, /Generated successfully|完成汇报/);
 });
 
-test('issue bulk delete confirms, deletes each issue, and keeps failures selected', async (t) => {
+test('local bulk deletion is unreachable without a selection entry', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   app.router.delete('/api/issues/bulk-1', { ok: true });
-  app.router.delete('/api/issues/bulk-2', { body: { error: 'conflict' }, status: 409 });
-  const seed = `
-    state.data.issues=[
-      {id:'bulk-1',title:'Delete one',projectId:state.projectFilter,status:'backlog',source:'local',deletionAllowed:true},
-      {id:'bulk-2',title:'Delete two',projectId:state.projectFilter,status:'backlog',source:'gongfeng',deletionAllowed:true}
-    ];
-    state.data.tasks=[{id:'t-1',issueId:'bulk-1',status:'failed'}];
-    state.issueSelection=new Set();state.issueView='table';setIssueSelectionMode(true);renderIssues();
-  `;
-  app.evaluate(seed);
-  await app.evaluate(`deleteSelectedIssues()`);
-
-  const page = app.document.querySelector('[data-issue-select-page]');
-  page.checked = true;
-  page.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  assert.equal(app.evaluate(`state.issueSelection.size`), 2);
-
-  const cancelled = app.evaluate(`deleteSelectedIssues()`);
-  await settle(2);
-  app.document.querySelector('#confirmCancelBtn').click();
-  await cancelled;
-  assert.equal(app.evaluate(`state.issueSelection.size`), 2);
-  assert.equal(app.router.calls.filter((c) => c.method === 'DELETE').length, 0);
-
-  const done = app.evaluate(`deleteSelectedIssues()`);
-  await settle(2);
-  assert.match(app.document.querySelector('#issueBulkActions').textContent, /等待确认/);
-  app.document.querySelector('#confirmOkBtn').click();
-  await done;
+  app.evaluate(`
+    state.data.issues=[{id:'bulk-1',title:'Synced item',projectId:state.projectFilter,status:'backlog',source:'feishu_bitable',externalRef:{source:'feishu_bitable',externalId:'rec-1'}}];
+    state.issueSelection=new Set(['bulk-1']);state.issueSelectionMode=true;
+    switchView('executions');
+  `);
   await settle(4);
-  assert.deepEqual(app.router.calls.filter((c) => c.method === 'DELETE').map((c) => c.path),
-    ['/api/issues/bulk-1', '/api/issues/bulk-2']);
-  assert.equal(app.evaluate(`state.issueBulkDeleteResult.deleted`), 1);
-  assert.equal(app.evaluate(`state.issueSelectionMode`), true);
-  assert.equal(app.evaluate(`state.issueBulkDeleteResult.failures[0].id`), 'bulk-2');
-  assert.equal(app.evaluate(`state.issueBulkDeleting`), false);
+  assert.equal(app.evaluate('state.issueSelectionMode'), true);
+  assert.equal(app.document.querySelector('[data-issue-clear-selection]'), null);
+  assert.equal(app.document.querySelector('[data-issue-cancel-selection]'), null);
+  await app.evaluate('deleteSelectedIssues()');
+  await settle(2);
+  assert.equal(app.router.calls.filter((c) => c.method === 'DELETE').length, 0, '执行中心不触发本地删除');
 });
