@@ -94,6 +94,22 @@ func (r *DeliveryRepo) DeliveriesByWorkItem(workItemID string) ([]domain.Deliver
 	if err != nil {
 		return nil, err
 	}
+	return deliveryRowsToDomain(rows)
+}
+
+// DeliveriesByProject lists the delivery evidence of one project, newest
+// first. It backs the read-only Delivery API when no Work Item is selected.
+func (r *DeliveryRepo) DeliveriesByProject(projectID string) ([]domain.Delivery, error) {
+	var rows []deliveryRow
+	err := r.DB.Where("project_id = ?", strings.TrimSpace(projectID)).
+		Order("created_at DESC, id DESC").Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return deliveryRowsToDomain(rows)
+}
+
+func deliveryRowsToDomain(rows []deliveryRow) ([]domain.Delivery, error) {
 	out := make([]domain.Delivery, 0, len(rows))
 	for _, row := range rows {
 		delivery, err := row.toDomain()

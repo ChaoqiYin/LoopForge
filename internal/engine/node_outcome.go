@@ -410,7 +410,9 @@ func (e *Engine) finishAt(id string, generation int, status, msg string) {
 	}
 	// Resolving MRs calls Gongfeng, so it runs outside the run state lock.
 	if delivered != nil {
-		_ = e.repo.MarkIssueDeliveredFromSOPMRs(delivered.ExecutionContext.IssueID, e.deliveryMRsFromRun(*delivered), deliveredAt)
+		mrs := e.deliveryMRsFromRun(*delivered)
+		_ = e.repo.MarkIssueDeliveredFromSOPMRs(delivered.ExecutionContext.IssueID, mrs, deliveredAt)
+		e.recordRunDeliveries(*delivered, mrs, deliveredAt)
 	}
 	// Failed runs can be retried in the same workspace. Successful and
 	// cancelled runs release their workspace immediately to keep control-plane

@@ -1104,6 +1104,15 @@ func (h *runnersHandlers) runnerTaskClaim(c *gin.Context) {
 			task.Invocation.GitHTTPUserID = 0
 			c.Header("Cache-Control", "no-store")
 		}
+		if h.hydrateRepositoryServiceGitCredentials(&task, runner) {
+			// Service credentials win over the user's optional override. When
+			// both SSH sources contributed, refresh pinned known hosts for all.
+			if input.SupportsGitSSHKnownHosts && len(task.Invocation.GitSSHKeys) > 0 {
+				ctx := gitwork.WithSSHKnownHostsLookup(c.Request.Context(), h.repo.PlatformSSHKnownHosts)
+				task.GitSSHKnownHosts = gitwork.SSHKnownHostsForKeys(ctx, task.Invocation.GitSSHKeys)
+			}
+			c.Header("Cache-Control", "no-store")
+		}
 		c.JSON(http.StatusOK, map[string]any{"task": resolveRunnerTaskSandbox(task, runner.OS)})
 	}
 	deadline := time.Now().Add(runnerLongPollTimeout())

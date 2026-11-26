@@ -80,7 +80,9 @@ type Server struct {
 	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers  // catalog.go
+	catalog         *catalogHandlers // catalog.go
+	repoCredentials *repositoryCredentialsHandlers
+	deliveries      *deliveriesHandlers
 	mcp             *mcpHandlers      // mcp.go
 	market          *marketHandlers   // mcp_market.go
 	skillhub        *skillhubHandlers // skillhub_market.go
@@ -97,7 +99,8 @@ type Server struct {
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
-	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	workManagement  *workManagementHandlers // work_management.go
+	know            *knowledgeHandlers      // knowledge.go / knowledge_proxy.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -165,6 +168,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
 		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
 		catalog:         &catalogHandlers{deps: d},
+		repoCredentials: &repositoryCredentialsHandlers{deps: d},
+		deliveries:      &deliveriesHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
@@ -183,6 +188,7 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		workManagement:  &workManagementHandlers{deps: d, adapter: newFeishuWorkManagementAdapter(s)},
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -424,6 +430,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/repositories", api.catalog.repositories)
 	g.DELETE("/api/repositories", api.catalog.repositories)
 	g.GET("/api/repositories/:id", api.catalog.repository)
+	g.GET("/api/repositories/:id/git-credentials", api.repoCredentials.credentials)
+	g.PUT("/api/repositories/:id/git-credentials", api.repoCredentials.credentials)
+	g.DELETE("/api/repositories/:id/git-credentials/:credId", api.repoCredentials.credentials)
+	g.GET("/api/deliveries", api.deliveries.deliveries)
+	g.GET("/api/deliveries/:id", api.deliveries.delivery)
 	g.GET("/api/issues", api.issues.issues)
 	g.PUT("/api/issues", api.issues.issues)
 	g.POST("/api/issues", api.issues.issues)
@@ -638,6 +649,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.POST("/api/schedule-jobs/:id/enabled", api.schedule.scheduleJobEnabled)
 	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
 	g.GET("/api/schedule-job-executions/dashboard", api.schedule.scheduleJobExecutionDashboard)
+
+	// --- work management (external work items) ---
+	api.workManagement.register(g)
 
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)

@@ -58,3 +58,30 @@ func TestDeliveryRecordsCRUD(t *testing.T) {
 		t.Fatal("unknown delivery state should be rejected")
 	}
 }
+
+func TestDeliveriesByProjectListsNewestFirst(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+
+	older := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	for _, delivery := range []domain.Delivery{
+		{ID: "delivery-old", WorkItemID: "issue-1", ProjectID: "proj-1", State: domain.DeliveryStateSucceeded, CreatedAt: older},
+		{ID: "delivery-new", WorkItemID: "issue-2", ProjectID: "proj-1", State: domain.DeliveryStateFailed, CreatedAt: newer},
+		{ID: "delivery-other", WorkItemID: "issue-3", ProjectID: "proj-2", State: domain.DeliveryStateSucceeded, CreatedAt: newer},
+	} {
+		if err := s.PutDelivery(delivery); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := s.DeliveriesByProject("proj-1")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("deliveries by project = %+v, %v", list, err)
+	}
+	if list[0].ID != "delivery-new" || list[1].ID != "delivery-old" {
+		t.Fatalf("deliveries ordering = %+v", list)
+	}
+}
