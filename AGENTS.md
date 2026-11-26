@@ -96,3 +96,17 @@ Preserve the platform architecture; keep deployment-specific adapters isolated. 
   `migrateLegacyProjectTapd`），`Open` 只留连接 + gorm AutoMigrate，
   `migrations/` 清空为手动 SQL 脚本目录，测试默认数据移入
   `internal/repo/opentest.go`。
+
+## Agent skills
+
+### Issue tracker
+
+Issue 与 spec 以 GitHub Issues 形式记录在本仓库（`ChaoqiYin/LoopForge`），统一走 `gh` CLI。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+沿用五个规范 triage 标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文：根目录 `GLOSSARY.md` 加 `docs/adr/`。见 `docs/agents/domain.md`。
