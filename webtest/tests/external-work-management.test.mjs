@@ -104,7 +104,7 @@ test('system configuration saves connection, self-check, sync, and mappings', as
     { field: 'status', externalFieldName: '状态' },
   ];
   const statusMappings = [
-    { externalStatus: '开发中', action: 'start_sop', workflowId: 'flow-1' },
+    { externalStatus: '开发中', action: 'start_sop', workflowId: 'flow-1', awaitingApproval: true },
     { externalStatus: '已上线', action: 'ignore' },
   ];
   app.router.get('/api/work-management/connections', { connections: [connection] });
@@ -131,6 +131,8 @@ test('system configuration saves connection, self-check, sync, and mappings', as
   assert.equal(form.elements.name.value, '飞书需求主表');
   assert.equal(form.elements.tableId.value, 'tbl-1');
   assert.equal(form.elements.allowWriteback.checked, false);
+  assert.match(form.elements.allowWriteback.className, /\bhui-switch\b/,
+    '开关必须复用 Harness Switch 视觉语言');
 
   form.elements.allowWriteback.checked = true;
   form.querySelector('[data-wm-save]').click();
@@ -157,11 +159,16 @@ test('system configuration saves connection, self-check, sync, and mappings', as
 
   const statusForm = app.document.querySelector('#wmStatusMappings');
   assert.ok(statusForm.querySelector('[data-status-row]'), '状态映射必须回填');
+  const awaiting = statusForm.querySelector('[data-status-row] input[name="awaitingApproval"]');
+  assert.ok(awaiting, '状态映射必须提供显式的等待业务审批开关');
+  assert.equal(awaiting.checked, true);
+  assert.match(awaiting.className, /\bhui-switch\b/);
   statusForm.querySelector('[data-wm-save-statuses]').click();
   await settle(4);
   const statusSave = app.router.calls.find((call) => call.method === 'PUT' && call.path === '/api/work-management/connections/wm-1/status-mappings');
   assert.equal(statusSave.body.statusMappings[0].externalStatus, '开发中');
   assert.equal(statusSave.body.statusMappings[0].action, 'start_sop');
+  assert.equal(statusSave.body.statusMappings[0].awaitingApproval, true);
 });
 
 test('approval center is read-only and lists external business approvals plus internal execution gates', async (t) => {
@@ -175,16 +182,20 @@ test('approval center is read-only and lists external business approvals plus in
     nodes: { review: { status: 'waiting_approval' } },
   };
   const pendingExternal = { ...formalIssue, id: 'wi-2', title: '待审批的报销流程',
-    externalRef: { ...formalIssue.externalRef, externalId: 'rec-002', externalState: '待审批' } };
+    externalRef: { ...formalIssue.externalRef, externalId: 'rec-002', externalState: '待审批', awaitingApproval: true } };
+  // A status whose text looks like an approval but has no explicit mapping
+  // marker must not be guessed into the approval center.
+  const legacyLookalike = { ...formalIssue, id: 'wi-3', title: '只是文案像审批',
+    externalRef: { ...formalIssue.externalRef, externalId: 'rec-003', externalState: '待审批（旧状态）' } };
   app.router.get('/api/runs', [waitingRun]);
   app.router.get('/api/tasks', [{ id: 'task-1', issueId: 'wi-1', runId: 'run-gate-1', workflowId: 'flow-1' }]);
-  app.router.get('/api/issues', [pendingExternal]);
+  app.router.get('/api/issues', [pendingExternal, legacyLookalike]);
 
   app.evaluate(`
     state.data.projects=[{id:'project-1',name:'Atlas',key:'ATL'}];
     state.data.runs=[${JSON.stringify(waitingRun)}];
     state.data.tasks=[{id:'task-1',issueId:'wi-1',runId:'run-gate-1',workflowId:'flow-1'}];
-    state.data.issues=[${JSON.stringify(pendingExternal)}];
+    state.data.issues=[${JSON.stringify(pendingExternal)},${JSON.stringify(legacyLookalike)}];
     state.currentUser={id:7,loginName:'reviewer',isPlatformAdmin:true};
     switchView('approvals');
   `);
@@ -192,6 +203,8 @@ test('approval center is read-only and lists external business approvals plus in
 
   const view = app.document.querySelector('#approvalsView');
   assert.match(view.textContent, /待审批的报销流程/);
+  assert.doesNotMatch(view.textContent, /只是文案像审批/,
+    '审批中心只能依据状态映射的显式标记，不能用状态文案猜测');
   assert.ok(view.querySelector('#externalApprovalList'), '审批中心需要独立的只读外部审批区');
   assert.ok(view.querySelector('a[href="https://feishu.example/base/rec-001"]') || view.querySelector('[data-external-link]'),
     '外部待审批必须能跳回外部平台');
@@ -276,4 +289,22 @@ test('runs view keeps temporary runs visible and can filter them from formal run
   await settle(3);
   assert.match(view.querySelector('#runList').textContent, /Delivery Flow/);
   assert.doesNotMatch(view.querySelector('#runList').textContent, /自由探索/);
+});
+
+test('execution status reuses the Run status mapping and has no paused Run status', async (t) => {
+  const app = await loadApp();
+  t.after(app.close);
+  const result = app.evaluate(`(() => ({
+    running: executionStatusLabel({status:'running'}),
+    shared: runStatus('running'),
+    pausedLegacy: executionStatusLabel({status:'paused'}),
+    pausedLabel: runStatus('paused'),
+    pausedFlag: executionStatusLabel({pauseRequested:true,status:'waiting'}),
+    displayPaused: runDisplayStatus({pauseRequested:true,status:'waiting'})
+  }))()`);
+  assert.equal(result.running, result.shared, '执行中心必须复用 runs.js 的 Run 状态文案');
+  assert.notEqual(result.pausedLegacy, '已暂停', 'paused 不是合法的 Run 状态');
+  assert.equal(result.pausedLegacy, result.pausedLabel);
+  assert.equal(result.pausedFlag, '已暂停');
+  assert.equal(result.displayPaused, '已暂停');
 });

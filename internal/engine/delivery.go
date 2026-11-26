@@ -12,7 +12,9 @@ import (
 
 // recordRunDeliveries writes the Delivery evidence of a successful top-level
 // run. A Delivery does not depend on a PR/MR provider: the provider URL is an
-// optional detail, so a Git-only repository still completes the flow.
+// optional detail, so a Git-only repository still completes the flow. Only a
+// Formal Work Item bound to a Management Connection produces Delivery; legacy
+// Gongfeng/TAPD compatibility rows and local Issues are excluded.
 func (e *Engine) recordRunDeliveries(run domain.Run, mrs []domain.DeliveryMR, at time.Time) {
 	if e == nil || e.repo == nil || run.IsTemporary() {
 		return
@@ -21,11 +23,13 @@ func (e *Engine) recordRunDeliveries(run domain.Run, mrs []domain.DeliveryMR, at
 	if issueID == "" || strings.TrimSpace(run.ExecutionContext.ParentRunID) != "" {
 		return
 	}
+	issue, ok := e.repo.Issue(issueID)
+	if !ok || !issue.FormalWorkItem() || issue.ExternalRef == nil || issue.ExternalRef.Orphaned {
+		return
+	}
 	projectID := strings.TrimSpace(run.ExecutionContext.ProjectID)
 	if projectID == "" {
-		if issue, ok := e.repo.Issue(issueID); ok {
-			projectID = issue.ProjectID
-		}
+		projectID = issue.ProjectID
 	}
 	if projectID == "" {
 		return
@@ -44,7 +48,7 @@ func (e *Engine) recordRunDeliveries(run domain.Run, mrs []domain.DeliveryMR, at
 	if len(repositories) == 0 {
 		repositories = []domain.RepositoryContext{{}}
 	}
-	unspecified := domain.DeliveryCheck{State: domain.DeliveryCheckSkipped, Summary: "运行未上报该检查结果"}
+	tests, review, approval := deliveryChecks(run)
 	for index, rc := range repositories {
 		repositoryName := rc.Name
 		if repositoryName == "" && rc.RepositoryID != "" {
@@ -60,9 +64,9 @@ func (e *Engine) recordRunDeliveries(run domain.Run, mrs []domain.DeliveryMR, at
 			RepositoryName: repositoryName,
 			Branch:         rc.WorkBranch,
 			CommitSHA:      runDeliveredCommit(run, rc),
-			Tests:          unspecified,
-			Review:         unspecified,
-			Approval:       unspecified,
+			Tests:          tests,
+			Review:         review,
+			Approval:       approval,
 			State:          domain.DeliveryStateSucceeded,
 			CompletedAt:    at.UTC(),
 		}
@@ -70,7 +74,75 @@ func (e *Engine) recordRunDeliveries(run domain.Run, mrs []domain.DeliveryMR, at
 			delivery.ProviderMRURL = mr.URL
 		}
 		_ = e.repo.PutDelivery(delivery)
+		if e.OnDeliveryRecorded != nil {
+			// The hook enqueues a delivery-summary writeback. It must never
+			// fail or block the Run; the Work Management outbox retries.
+			e.OnDeliveryRecorded(delivery)
+		}
 	}
+}
+
+// deliveryChecks derives the structured Tests / Review / Approval evidence
+// from the run's artifacts and workflow snapshot. A check with no evidence
+// stays skipped and records why, instead of being reported as passed.
+func deliveryChecks(run domain.Run) (tests, review, approval domain.DeliveryCheck) {
+	now := time.Now().UTC()
+	tests = deliveryCheckFromArtifacts(run, []string{"test-report", "tests-report", "测试报告", "test_report"}, "运行未上报测试结果")
+	review = deliveryCheckFromArtifacts(run, []string{"review-report", "code-review", "审查报告", "review_report"}, "运行未上报代码审查结果")
+	approval = deliveryApprovalCheck(run)
+	for _, check := range []*domain.DeliveryCheck{&tests, &review, &approval} {
+		if check.State == domain.DeliveryCheckPassed {
+			check.UpdatedAt = now
+		}
+	}
+	return tests, review, approval
+}
+
+// deliveryCheckFromArtifacts treats a named report artifact as structured
+// evidence: the run completed and produced the report. The artifact path is
+// kept in the summary so an operator can inspect the source.
+func deliveryCheckFromArtifacts(run domain.Run, names []string, missingReason string) domain.DeliveryCheck {
+	for _, artifact := range run.Artifacts {
+		haystack := strings.ToLower(strings.TrimSpace(artifact.Name + " " + artifact.Path))
+		for _, name := range names {
+			if !strings.Contains(haystack, strings.ToLower(name)) {
+				continue
+			}
+			summary := "运行产物：" + firstNonEmpty(artifact.Path, artifact.Name)
+			return domain.DeliveryCheck{State: domain.DeliveryCheckPassed, Summary: summary}
+		}
+	}
+	return domain.DeliveryCheck{State: domain.DeliveryCheckSkipped, Summary: missingReason}
+}
+
+// deliveryApprovalCheck reports an Execution Gate (approval node) that
+// completed in this run. It is LoopForge's execution checkpoint, not a
+// Business Approval.
+func deliveryApprovalCheck(run domain.Run) domain.DeliveryCheck {
+	hasGate := false
+	for _, node := range run.WorkflowSnapshot.Nodes {
+		if node.Type != "approval" {
+			continue
+		}
+		hasGate = true
+		if nr := run.Nodes[node.ID]; nr != nil && nr.Status == "succeeded" {
+			summary := "执行门禁：" + firstNonEmpty(node.Name, node.ID)
+			return domain.DeliveryCheck{State: domain.DeliveryCheckPassed, Summary: summary}
+		}
+	}
+	if !hasGate {
+		return domain.DeliveryCheck{State: domain.DeliveryCheckSkipped, Summary: "运行未包含执行门禁"}
+	}
+	return domain.DeliveryCheck{State: domain.DeliveryCheckSkipped, Summary: "执行门禁未完成"}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // deliveryRecordID is deterministic so a replayed finish settles the same

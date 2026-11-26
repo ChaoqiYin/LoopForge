@@ -34,8 +34,10 @@ type ProjectionStore interface {
 	IssueByExternalKey(connectionID, tableID, businessKey string) (domain.Issue, bool)
 	IssueByExternalRecordID(connectionID, tableID, recordID string) (domain.Issue, bool)
 	IssuesByExternalConnection(connectionID, tableID string) ([]domain.Issue, error)
+	Issue(id string) (domain.Issue, bool)
 	PutIssue(domain.Issue) error
 	PatchIssue(id string, fn func(*domain.Issue) error) (domain.Issue, error)
+	Delivery(id string) (domain.Delivery, bool)
 
 	Project(id string) (domain.Project, bool)
 	Projects() []domain.Project
@@ -63,7 +65,7 @@ type ServiceOptions struct {
 // the inbox row; projection happens asynchronously so Feishu's three-second
 // acknowledgement window is never blocked by external API calls.
 type Service struct {
-	adapter *FeishuAdapter
+	adapter Adapter
 	store   ProjectionStore
 	exec    RunExecution
 	now     func() time.Time
@@ -89,7 +91,7 @@ type Service struct {
 
 // NewService builds the projection service. The caller normally calls Start to
 // begin the inbox worker, reconciliation timers and event subscriptions.
-func NewService(adapter *FeishuAdapter, store ProjectionStore, opts ServiceOptions) *Service {
+func NewService(adapter Adapter, store ProjectionStore, opts ServiceOptions) *Service {
 	now := opts.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -139,12 +141,15 @@ func (s *Service) Start(ctx context.Context) {
 			s.logger("work management: reset stranded events: %v", err)
 		}
 		go s.worker(ctx)
-		go s.ensureSubscriptions(ctx)
+		go s.subscribeAll(ctx)
 		go s.reconcileLoop(ctx)
 	})
 }
 
-func (s *Service) ensureSubscriptions(ctx context.Context) {
+// subscribeAll re-asserts the per-file event subscription of every enabled
+// connection. It is not a startup self-heal of data: it only registers the
+// platform event subscription the connection needs.
+func (s *Service) subscribeAll(ctx context.Context) {
 	conns, err := s.store.ManagementConnections()
 	if err != nil {
 		s.logger("work management: list connections for subscription: %v", err)
@@ -471,18 +476,157 @@ func (s *Service) handleEvent(ctx context.Context, event domain.WorkManagementEv
 		return s.orphanExternalRecord(conn, event.RecordID)
 	case domain.ManagementEventFieldChanged:
 		return s.refreshFieldMappings(ctx, conn)
+	case domain.ManagementEventDeliverySummary:
+		return s.writeDeliverySummary(ctx, conn, event)
 	}
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// Delivery summary outbox
+// ---------------------------------------------------------------------------
+
+// QueueDeliveryWriteback enqueues a delivery-summary writeback. It is called
+// when Delivery evidence is created or changes. Queueing never returns an
+// error: a failed enqueue is logged and a delivery summary write can never
+// block or fail the Run that produced it. Transient external failures retry
+// through the Event Inbox backoff; permanent configuration errors are skipped
+// with an audit entry.
+func (s *Service) QueueDeliveryWriteback(delivery domain.Delivery) {
+	if s == nil || strings.TrimSpace(delivery.ID) == "" {
+		return
+	}
+	issue, ok := s.store.Issue(delivery.WorkItemID)
+	if !ok || !issue.FormalWorkItem() || issue.ExternalRef == nil || issue.ExternalRef.Orphaned {
+		return
+	}
+	conn, ok := s.store.ManagementConnection(issue.ExternalRef.ConnectionID)
+	if !ok || !conn.Enabled || !conn.AllowWriteback || conn.WritebackPaused {
+		return
+	}
+	payload, err := json.Marshal(struct {
+		DeliveryID string `json:"deliveryId"`
+	}{DeliveryID: delivery.ID})
+	if err != nil {
+		s.logger("work management: encode delivery writeback %s: %v", delivery.ID, err)
+		return
+	}
+	// The event id includes a summary fingerprint so a later delivery status
+	// change queues a fresh write while a redelivery of the same summary is
+	// deduplicated.
+	fingerprint := sha256.Sum256([]byte(strings.Join([]string{
+		delivery.ID, delivery.State, delivery.Branch, delivery.CommitSHA, delivery.ProviderMRURL,
+		deliveryCheckText(delivery.Tests), deliveryCheckText(delivery.Review),
+	}, "\x00")))
+	now := s.now()
+	if _, err := s.store.RecordWorkManagementEvent(domain.WorkManagementEvent{
+		EventID:      "delivery:" + delivery.ID + ":" + hex.EncodeToString(fingerprint[:6]),
+		ConnectionID: conn.ID, TableID: conn.TableID,
+		RecordID: strings.TrimSpace(issue.ExternalRef.RecordID), Action: domain.ManagementEventDeliverySummary,
+		Payload: payload, Status: domain.ManagementEventPending, ReceivedAt: now,
+	}); err != nil {
+		s.logger("work management: enqueue delivery writeback %s: %v", delivery.ID, err)
+		return
+	}
+	s.signal()
+}
+
+func (s *Service) writeDeliverySummary(ctx context.Context, conn domain.ManagementConnection, event domain.WorkManagementEvent) error {
+	var payload struct {
+		DeliveryID string `json:"deliveryId"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return nil
+	}
+	delivery, ok := s.store.Delivery(strings.TrimSpace(payload.DeliveryID))
+	if !ok {
+		return nil
+	}
+	issue, ok := s.store.Issue(delivery.WorkItemID)
+	if !ok || issue.ExternalRef == nil || issue.ExternalRef.Orphaned {
+		return nil
+	}
+	summary := domain.ExternalDeliverySummary{
+		Branch: delivery.Branch, CommitSHA: delivery.CommitSHA,
+		Tests: deliveryCheckText(delivery.Tests), Review: deliveryCheckText(delivery.Review),
+		URL: delivery.ProviderMRURL,
+	}
+	if err := s.adapter.UpdateDeliverySummary(ctx, conn, *issue.ExternalRef, summary); err != nil {
+		switch {
+		case errors.Is(err, ErrWritebackDisabled), errors.Is(err, ErrWritebackPaused),
+			errors.Is(err, ErrDeliveryWritebackNotConfigured), errors.Is(err, ErrReadOnlyTable),
+			errors.Is(err, ErrFieldMapping), errors.Is(err, ErrFeishuPermission):
+			return s.appendSystemOperation(issue.ID, operationDeliverySkipped, "交付摘要回写跳过："+UserMessage(err))
+		}
+		return err
+	}
+	return s.appendSystemOperation(issue.ID, operationDeliveryWriteback, "交付摘要已回写外部平台")
+}
+
+// deliveryCheckText turns one structured check into the summary text written
+// to the external platform. A skipped check contributes nothing.
+func deliveryCheckText(check domain.DeliveryCheck) string {
+	if strings.TrimSpace(check.State) == domain.DeliveryCheckSkipped {
+		return ""
+	}
+	return strings.TrimSpace(check.Summary)
+}
+
 func (s *Service) refreshFieldMappings(ctx context.Context, conn domain.ManagementConnection) error {
+	previous, err := s.store.ManagementFieldMappings(conn.ID, conn.TableID)
+	if err != nil {
+		return err
+	}
 	resolved, err := s.adapter.ResolveFieldMappings(ctx, conn)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.store.PutManagementFieldMappings(resolved)
+	putErr := s.store.PutManagementFieldMappings(resolved)
+	s.mu.Unlock()
+	if putErr != nil {
+		return putErr
+	}
+	if changes := fieldTypeChanges(previous, resolved); len(changes) > 0 {
+		// Refreshing the cache is not enough: writing a value into a column
+		// whose type changed can corrupt the record. Pause automatic writeback
+		// and surface a visible not-ready alert until an administrator saves
+		// the mapping again.
+		s.pauseWriteback(conn.ID, "外部字段类型已变更，自动回写已暂停："+strings.Join(changes, "、"))
+	}
+	return nil
+}
+
+func fieldTypeChanges(before, after []domain.ManagementFieldMapping) []string {
+	previous := map[domain.WorkItemField]string{}
+	for _, item := range before {
+		previous[item.Field] = strings.TrimSpace(item.ExternalFieldType)
+	}
+	var changes []string
+	for _, item := range after {
+		oldType := previous[item.Field]
+		newType := strings.TrimSpace(item.ExternalFieldType)
+		if oldType == "" || newType == "" || oldType == newType {
+			continue
+		}
+		changes = append(changes, string(item.Field)+"（"+oldType+" → "+newType+"）")
+	}
+	return changes
+}
+
+func (s *Service) pauseWriteback(connID, reason string) {
+	conn, ok := s.store.ManagementConnection(connID)
+	if !ok {
+		return
+	}
+	conn.WritebackPaused = true
+	conn.WritebackPausedReason = reason
+	conn.Readiness = domain.ManagementConnectionReadiness{
+		State: domain.ManagementReadinessNotReady, Message: reason, CheckedAt: s.now(),
+	}
+	if err := s.store.PutManagementConnection(conn); err != nil {
+		s.logger("work management: persist writeback pause %s: %v", connID, err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +638,8 @@ func (s *Service) refreshFieldMappings(ctx context.Context, conn domain.Manageme
 // only the projection and the external business status snapshot change.
 func (s *Service) projectExternalRecord(ctx context.Context, conn domain.ManagementConnection, record domain.ExternalRecord) error {
 	businessKey := strings.TrimSpace(record.Ref.BusinessKey)
-	if businessKey == "" {
+	missingBusinessKey := businessKey == ""
+	if missingBusinessKey {
 		businessKey = strings.TrimSpace(record.Ref.RecordID)
 		s.logger("work management: record %s in %s/%s has no business key; degraded to record id", businessKey, conn.ID, conn.TableID)
 	}
@@ -513,8 +658,11 @@ func (s *Service) projectExternalRecord(ctx context.Context, conn domain.Managem
 			Title: strings.TrimSpace(record.Title), Status: "backlog", Kind: "requirement",
 			Source: domain.ManagementPlatformFeishuBitable,
 		}
-		applyExternalRecord(&issue, conn, record, projectID, s.now(), s)
+		s.applyExternalRecord(&issue, conn, record, projectID, s.now())
 		issue.AppendOperation(domain.IssueOperation{At: s.now(), Actor: systemActor, Action: "external_sync", Detail: "从飞书多维表格同步"})
+		if missingBusinessKey {
+			appendBusinessKeyAlert(&issue, businessKey)
+		}
 		if err := s.store.PutIssue(issue); err != nil {
 			// A concurrent worker may have created the row already; fall back
 			// to the identity lookup and update it.
@@ -530,27 +678,56 @@ func (s *Service) projectExternalRecord(ctx context.Context, conn domain.Managem
 		}
 	}
 	updated, err := s.store.PatchIssue(existing.ID, func(issue *domain.Issue) error {
-		applyExternalRecord(issue, conn, record, projectID, s.now(), s)
+		oldRecord := ""
+		wasDegraded := false
+		if issue.ExternalRef != nil {
+			oldRecord = strings.TrimSpace(issue.ExternalRef.RecordID)
+			wasDegraded = issue.ExternalRef.BusinessKeyDegraded
+		}
+		s.applyExternalRecord(issue, conn, record, projectID, s.now())
+		if issue.ExternalRef == nil {
+			return nil
+		}
+		newRecord := strings.TrimSpace(issue.ExternalRef.RecordID)
+		if oldRecord != "" && oldRecord != newRecord {
+			// Collision policy: the business key is authoritative, so the
+			// Work Item rebinds to its current record row. Duplicate business
+			// keys in the table stay visible as an audit alert.
+			s.logger("work management: business key %s rebinds record %s -> %s", businessKey, oldRecord, newRecord)
+			issue.AppendOperation(domain.IssueOperation{
+				At: s.now(), Actor: systemActor, Action: operationBusinessKeyConflict,
+				Detail: "业务编号 " + businessKey + " 对应多条记录：" + oldRecord + " → " + newRecord,
+			})
+		}
+		if missingBusinessKey && !wasDegraded {
+			appendBusinessKeyAlert(issue, businessKey)
+		}
 		return nil
 	})
 	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	if existing.ExternalRef != nil {
-		oldRecord := strings.TrimSpace(existing.ExternalRef.RecordID)
-		newRecord := firstNonEmpty(record.Ref.RecordID, businessKey)
-		if oldRecord != "" && oldRecord != newRecord {
-			// Collision policy: the business key is authoritative, so the
-			// Work Item rebinds to its current record row. Duplicate business
-			// keys in the table stay visible as an alert.
-			s.logger("work management: business key %s rebinds record %s -> %s", businessKey, oldRecord, newRecord)
-		}
-	}
 	return s.afterProjection(ctx, conn, updated, before)
 }
 
-func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, record domain.ExternalRecord, projectID string, now time.Time, service *Service) {
+func appendBusinessKeyAlert(issue *domain.Issue, recordID string) {
+	if issue == nil || issue.ExternalRef == nil {
+		return
+	}
+	if !issue.ExternalRef.BusinessKeyDegraded {
+		issue.ExternalRef.BusinessKeyDegraded = true
+	}
+	issue.AppendOperation(domain.IssueOperation{
+		At: issue.ExternalRef.SyncedAt, Actor: systemActor, Action: operationBusinessKeyMissing,
+		Detail: "外部记录缺少业务编号，已降级使用记录 ID：" + recordID,
+	})
+}
+
+// applyExternalRecord merges one authoritative external record into the local
+// projection. The external business status is a read-only snapshot; the
+// Approval marker mirrors the configured status mapping.
+func (s *Service) applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, record domain.ExternalRecord, projectID string, now time.Time) {
 	issue.ProjectID = projectID
 	issue.Title = strings.TrimSpace(record.Title)
 	// Optional fields are only overwritten when the external record carries a
@@ -565,7 +742,7 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 		issue.AcceptanceCriteria = value
 	}
 	issue.ExternalAssignee = strings.TrimSpace(record.Assignee)
-	if repositoryID, ok := service.resolveRepository(record.Repository, projectID, issue); ok {
+	if repositoryID, ok := s.resolveRepository(record.Repository, projectID, issue); ok {
 		issue.RepositoryID = repositoryID
 		if len(issue.RepositoryIDs) == 0 {
 			issue.RepositoryIDs = []string{repositoryID}
@@ -583,12 +760,14 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 	}
 	previousState := ""
 	previousOrphaned := false
+	degraded := false
 	var statusHistory []string
 	writebackState := ""
 	var writebackAt time.Time
 	if issue.ExternalRef != nil {
 		previousState = issue.ExternalRef.ExternalState
 		previousOrphaned = issue.ExternalRef.Orphaned
+		degraded = issue.ExternalRef.BusinessKeyDegraded
 		statusHistory = append([]string(nil), issue.ExternalRef.StatusHistory...)
 		writebackState = issue.ExternalRef.WritebackState
 		writebackAt = issue.ExternalRef.WritebackAt
@@ -608,6 +787,8 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 	ref.SyncedAt = now
 	ref.WritebackState = writebackState
 	ref.WritebackAt = writebackAt
+	ref.BusinessKeyDegraded = degraded || strings.TrimSpace(record.Ref.BusinessKey) == ""
+	ref.AwaitingApproval = s.awaitingApproval(conn, ref.ExternalState)
 	if previousState != ref.ExternalState && ref.ExternalState != "" {
 		statusHistory = appendStatusHistory(statusHistory, ref.ExternalState)
 	}
@@ -620,6 +801,24 @@ func applyExternalRecord(issue *domain.Issue, conn domain.ManagementConnection, 
 			Detail: "外部业务状态：" + ref.ExternalState,
 		})
 	}
+}
+
+// awaitingApproval reads the explicit business-approval marker from the status
+// mapping. An unmapped or legacy status is not an approval wait.
+func (s *Service) awaitingApproval(conn domain.ManagementConnection, externalStatus string) bool {
+	externalStatus = strings.TrimSpace(externalStatus)
+	if externalStatus == "" {
+		return false
+	}
+	mappings, err := s.store.ManagementStatusMappings(conn.ID, conn.TableID)
+	if err != nil {
+		s.logger("work management: read status mappings for approval marker: %v", err)
+		return false
+	}
+	if mapping, ok := findStatusMapping(mappings, externalStatus); ok {
+		return mapping.AwaitingApproval
+	}
+	return false
 }
 
 // resolveRepository maps the external repository value to a project

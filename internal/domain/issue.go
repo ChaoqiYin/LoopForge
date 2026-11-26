@@ -224,6 +224,14 @@ type ExternalRef struct {
 	// evidence is kept; automatic trigger stops.
 	Orphaned   bool      `json:"orphaned,omitempty"`
 	OrphanedAt time.Time `json:"orphanedAt,omitempty"`
+	// AwaitingApproval mirrors the status mapping's explicit business-approval
+	// marker for the current external business status. The read-only approval
+	// center filters on this flag; it never guesses from the status string.
+	AwaitingApproval bool `json:"awaitingApproval,omitempty"`
+	// BusinessKeyDegraded marks a record projected without its configured
+	// business key. The record id keeps the binding stable, but the missing key
+	// stays visible to operators and the business key is not authoritative.
+	BusinessKeyDegraded bool `json:"businessKeyDegraded,omitempty"`
 	// StatusHistory keeps the recently observed external business statuses so
 	// a regression (entering a value already seen) can be recorded without
 	// triggering an action. It is capped and never authoritative.
@@ -310,6 +318,11 @@ func (i Issue) IdentityBlock() string {
 		return ""
 	}
 	source := strings.ToLower(strings.TrimSpace(i.Source))
+	if source == "" && i.ExternalRef != nil {
+		// Projections carry the same source on the Issue and the ExternalRef;
+		// fall back so an Agent never sees a synced Work Item as local.
+		source = strings.ToLower(strings.TrimSpace(i.ExternalRef.Source))
+	}
 	if source == "" {
 		source = "local"
 	}
@@ -324,6 +337,8 @@ func (i Issue) IdentityBlock() string {
 		b.WriteString("TAPD")
 	case "gongfeng":
 		b.WriteString("工蜂")
+	case "feishu_bitable":
+		b.WriteString("飞书多维表格")
 	default:
 		b.WriteString("本地")
 	}

@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,7 +100,14 @@ func TestSuccessfulRunCreatesDeliveryWithoutPullRequest(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	issue := domain.Issue{ID: "issue-delivery", ProjectID: "platform", Title: "交付", Status: "todo", Kind: "requirement"}
+	issue := domain.Issue{
+		ID: "issue-delivery", ProjectID: "platform", Title: "交付", Status: "todo", Kind: "requirement",
+		Source: domain.ManagementPlatformFeishuBitable,
+		ExternalRef: &domain.ExternalRef{
+			Source: domain.ManagementPlatformFeishuBitable, ConnectionID: "conn-1", TableID: "tbl-1",
+			BusinessKey: "REQ-1", RecordID: "rec-1",
+		},
+	}
 	if err := s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +151,111 @@ func TestSuccessfulRunCreatesDeliveryWithoutPullRequest(t *testing.T) {
 		delivery.ProviderMRURL != "" || delivery.CompletedAt.IsZero() {
 		t.Fatalf("delivery evidence = %+v", delivery)
 	}
+	for name, check := range map[string]domain.DeliveryCheck{
+		"tests": delivery.Tests, "review": delivery.Review, "approval": delivery.Approval,
+	} {
+		if check.State != domain.DeliveryCheckSkipped || strings.TrimSpace(check.Summary) == "" {
+			t.Fatalf("%s check = %+v, want skipped with a reason", name, check)
+		}
+	}
+}
+
+// Delivery is only produced for a Formal Work Item bound to a Management
+// Connection. A local Issue or a legacy Gongfeng/TAPD row is excluded.
+func TestNonFormalRunDoesNotCreateDelivery(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	issues := []domain.Issue{
+		{ID: "local-issue", ProjectID: "platform", Title: "本地", Status: "todo", Kind: "requirement"},
+		{ID: "legacy-gongfeng", ProjectID: "platform", Title: "工蜂", Status: "todo", Kind: "issue",
+			Source: "gongfeng", ExternalRef: &domain.ExternalRef{Source: "gongfeng", ExternalID: "9", ExternalIID: 9}},
+		{ID: "legacy-tapd", ProjectID: "platform", Title: "TAPD", Status: "todo", Kind: "requirement",
+			Source: "tapd", ExternalRef: &domain.ExternalRef{Source: "tapd", ExternalID: "1001"}},
+	}
+	for _, issue := range issues {
+		if err := s.PutIssue(issue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &Engine{repo: s}
+	for _, issue := range issues {
+		e.recordRunDeliveries(domain.Run{
+			ID: "run-" + issue.ID,
+			Repositories: []domain.RepositoryContext{{
+				RepositoryID: "repo-local", Name: "api", WorkBranch: "work/x",
+			}},
+			ExecutionContext: domain.TelemetryContext{IssueID: issue.ID, ProjectID: "platform"},
+		}, nil, time.Now().UTC())
+		deliveries, err := s.DeliveriesByWorkItem(issue.ID)
+		if err != nil || len(deliveries) != 0 {
+			t.Fatalf("%s produced deliveries = %+v, %v", issue.ID, deliveries, err)
+		}
+	}
+}
+
+// Structured Delivery checks come from run artifacts and the workflow gate,
+// not from the run merely succeeding.
+func TestRecordRunDeliveriesDerivesStructuredChecks(t *testing.T) {
+	t.Parallel()
+	s, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	issue := domain.Issue{
+		ID: "wi-checks", ProjectID: "platform", Title: "交付", Status: "todo", Kind: "requirement",
+		Source: domain.ManagementPlatformFeishuBitable,
+		ExternalRef: &domain.ExternalRef{
+			Source: domain.ManagementPlatformFeishuBitable, ConnectionID: "conn-1", TableID: "tbl-1",
+			BusinessKey: "REQ-CHECKS", RecordID: "rec-checks",
+		},
+	}
+	if err := s.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	run := domain.Run{
+		ID:           "run-checks",
+		Repositories: []domain.RepositoryContext{{RepositoryID: "repo", Name: "api", WorkBranch: "work/checks"}},
+		ExecutionContext: domain.TelemetryContext{
+			IssueID: issue.ID, ProjectID: "platform",
+		},
+		WorkflowSnapshot: domain.WorkflowDefinition{Nodes: []domain.WorkflowNode{
+			{ID: "gate", Name: "验收", Type: "approval"},
+		}},
+		Nodes: map[string]*domain.NodeRun{"gate": {NodeID: "gate", Status: "succeeded"}},
+		Artifacts: []domain.Artifact{
+			{Name: "test-report.md", Path: "test-report.md"},
+			{Name: "review-report.md", Path: "review-report.md"},
+		},
+	}
+	(&Engine{repo: s}).recordRunDeliveries(run, nil, time.Now().UTC())
+
+	deliveries, err := s.DeliveriesByWorkItem(issue.ID)
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("deliveries = %+v, %v", deliveries, err)
+	}
+	delivery := deliveries[0]
+	for name, check := range map[string]domain.DeliveryCheck{
+		"tests": delivery.Tests, "review": delivery.Review, "approval": delivery.Approval,
+	} {
+		if check.State != domain.DeliveryCheckPassed || strings.TrimSpace(check.Summary) == "" {
+			t.Fatalf("%s check = %+v, want passed with evidence", name, check)
+		}
+	}
+	if !strings.Contains(delivery.Tests.Summary, "test-report.md") {
+		t.Fatalf("tests summary = %q", delivery.Tests.Summary)
+	}
+	if !strings.Contains(delivery.Review.Summary, "review-report.md") {
+		t.Fatalf("review summary = %q", delivery.Review.Summary)
+	}
+	if !strings.Contains(delivery.Approval.Summary, "验收") {
+		t.Fatalf("approval summary = %q", delivery.Approval.Summary)
+	}
 }
 
 func TestResolveRunCredentialsKeepsUserCredentialWhenRepositoryHasNoServiceCredential(t *testing.T) {
@@ -177,7 +290,12 @@ func TestRecordRunDeliveriesLinksProviderMRDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if err := s.PutIssue(domain.Issue{ID: "issue-mr-detail", ProjectID: "platform", Title: "交付", Status: "todo", Kind: "requirement"}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "issue-mr-detail", ProjectID: "platform", Title: "交付", Status: "todo", Kind: "requirement",
+		Source: domain.ManagementPlatformFeishuBitable,
+		ExternalRef: &domain.ExternalRef{
+			Source: domain.ManagementPlatformFeishuBitable, ConnectionID: "conn-1", TableID: "tbl-1",
+			BusinessKey: "REQ-MR", RecordID: "rec-mr",
+		}}); err != nil {
 		t.Fatal(err)
 	}
 	e := &Engine{repo: s}

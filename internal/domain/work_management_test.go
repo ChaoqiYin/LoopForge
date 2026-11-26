@@ -165,6 +165,21 @@ func TestIssueFormalWorkItemAndExternalStatus(t *testing.T) {
 	if local.FormalWorkItem() {
 		t.Fatal("an issue without an external record must not be formal")
 	}
+	// A bare source value (legacy Gongfeng/TAPD compatibility row) is not a
+	// Management Connection binding and must not enter formal dispatch.
+	for _, legacy := range []*ExternalRef{
+		{Source: "gongfeng", ExternalID: "99", ExternalIID: 1},
+		{Source: "tapd", ExternalID: "1001", ExternalType: "story"},
+		{Source: "feishu_bitable", ExternalID: "rec-1"},
+	} {
+		if (Issue{ID: "legacy", ExternalRef: legacy}).FormalWorkItem() {
+			t.Fatalf("legacy ref %+v must not be formal", legacy)
+		}
+	}
+	// A connection binding without a business key is not authoritative either.
+	if (Issue{ID: "no-key", ExternalRef: &ExternalRef{ConnectionID: "conn-1", TableID: "tbl-1", Source: "feishu_bitable"}}).FormalWorkItem() {
+		t.Fatal("a binding without a business key must not be formal")
+	}
 	formal := Issue{ID: "wi-1", Status: "todo", ExternalRef: &ExternalRef{
 		Source: "feishu_bitable", ExternalID: "rec-1", ExternalState: "开发中",
 		ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "REQ-1",

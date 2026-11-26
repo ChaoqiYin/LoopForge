@@ -28,7 +28,7 @@ func (e *Engine) withSSHKnownHosts(ctx context.Context) context.Context {
 }
 
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
-	if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
+	if gitwork.RepositoryUsesSSH(repository.Provider, repository.CloneURL) {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
 	}
 	return gitwork.WithHTTPRemote(ctx, repository.CloneURL)
@@ -45,7 +45,7 @@ func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentia
 func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 	var urls []string
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
+		if gitwork.RepositoryUsesSSH(repository.Provider, repository.CloneURL) {
 			urls = append(urls, repository.CloneURL)
 		}
 	}
@@ -143,35 +143,24 @@ func (e *Engine) applyRepositoryServiceCredentials(credentials *runtime.RunCrede
 		if err != nil || secret == "" {
 			continue
 		}
-		switch credential.Kind {
-		case domain.RepositoryGitCredentialHTTPS:
-			endpoint, err := domain.ParseGitHTTPEndpoint(credential.Host)
-			if err != nil {
-				continue
-			}
+		overlay, ok := gitwork.BuildServiceCredentialOverlay(credential, secret, rc.CloneURL)
+		if !ok {
+			continue
+		}
+		switch {
+		case overlay.HTTP != nil:
 			if credentials.GitHTTPCredentials == nil {
 				credentials.GitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{}
 			}
-			host := endpoint.Scope()
-			platform := domain.GitPlatformOther
-			if strings.EqualFold(endpoint.Hostname(), "github.com") {
-				platform = domain.GitPlatformGitHub
-			}
-			credentials.GitHTTPCredentials[host] = domain.GitHTTPExecutionCredential{
-				GitHTTPCredential: domain.GitHTTPCredential{
-					ID: credential.ID, Name: credential.Name, Platform: platform,
-					Host: host, Username: credential.Username,
-				},
-				Token: secret,
-			}
-		case domain.RepositoryGitCredentialSSH:
-			if rc.Provider != domain.RepositoryProviderSSH && !gitwork.IsSSHReference(rc.CloneURL) {
+			credentials.GitHTTPCredentials[overlay.HTTP.Host] = *overlay.HTTP
+		case overlay.SSH:
+			if !gitwork.RepositoryUsesSSH(rc.Provider, rc.CloneURL) {
 				continue
 			}
 			if credentials.GitSSHKeys == nil {
 				credentials.GitSSHKeys = map[string]string{}
 			}
-			credentials.GitSSHKeys[rc.CloneURL] = secret
+			credentials.GitSSHKeys[overlay.SSHURL] = overlay.SSHKey
 		}
 	}
 }

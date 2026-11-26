@@ -166,6 +166,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	// execution adapter only maps them onto Task/Run control.
 	wmExecution := &workManagementExecution{deps: d}
 	wmService := workmanagement.NewService(wmAdapter, s, workmanagement.ServiceOptions{Execution: wmExecution})
+	// Delivery evidence is produced by the engine; the hook only enqueues the
+	// external summary writeback into the Work Management outbox. It never
+	// blocks or fails the Run.
+	e.OnDeliveryRecorded = wmService.QueueDeliveryWriteback
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},

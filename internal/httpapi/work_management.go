@@ -348,6 +348,17 @@ func (h *workManagementHandlers) fieldMappings(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		// Saving the field mapping is the administrator's explicit repair after
+		// a field type change. Resume automatic writeback; a later type change
+		// pauses it again.
+		if conn.WritebackPaused {
+			conn.WritebackPaused = false
+			conn.WritebackPausedReason = ""
+			conn.Readiness = domain.ManagementConnectionReadiness{
+				State: domain.ManagementReadinessUnknown, Message: "字段映射已重新保存，请重新执行连接自检", CheckedAt: time.Now().UTC(),
+			}
+			_ = h.repo.PutManagementConnection(conn)
+		}
 		stored, err := h.repo.ManagementFieldMappings(conn.ID, conn.TableID)
 		if err != nil {
 			respond(c, err)

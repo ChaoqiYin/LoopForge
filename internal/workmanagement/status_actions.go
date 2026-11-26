@@ -212,8 +212,10 @@ func (s *Service) restartAction(ctx context.Context, issue domain.Issue, mapping
 }
 
 // writebackStatus performs the only external write a status mapping may
-// request. The local snapshot is advanced optimistically with a marker so the
-// resulting record-change event is recognized as self-originated.
+// request. ExternalState is an authoritative read-only snapshot: it is never
+// advanced optimistically here. Only a subsequent event or reconciliation
+// read-back updates it. The writeback marker only lets the projection
+// recognize its own write when that event arrives.
 func (s *Service) writebackStatus(ctx context.Context, conn domain.ManagementConnection, issue domain.Issue, mapping domain.ManagementStatusMapping) error {
 	ref := issue.ExternalRef
 	if ref == nil {
@@ -225,8 +227,8 @@ func (s *Service) writebackStatus(ctx context.Context, conn domain.ManagementCon
 	}
 	if err := s.adapter.UpdateExternalStatus(ctx, conn, *ref, target); err != nil {
 		switch {
-		case errors.Is(err, ErrWritebackDisabled), errors.Is(err, ErrReadOnlyTable),
-			errors.Is(err, ErrFieldMapping), errors.Is(err, ErrFeishuPermission):
+		case errors.Is(err, ErrWritebackDisabled), errors.Is(err, ErrWritebackPaused),
+			errors.Is(err, ErrReadOnlyTable), errors.Is(err, ErrFieldMapping), errors.Is(err, ErrFeishuPermission):
 			return s.skipAction(issue.ID, "外部状态回写跳过："+UserMessage(err))
 		}
 		_ = s.appendSystemOperation(issue.ID, operationActionFailed, "外部状态回写失败："+UserMessage(err))
@@ -237,11 +239,8 @@ func (s *Service) writebackStatus(ctx context.Context, conn domain.ManagementCon
 	}
 	_, err := s.patchIssue(issue.ID, func(item *domain.Issue) error {
 		if item.ExternalRef != nil {
-			item.ExternalRef.ExternalState = target
-			item.ExternalRef.StatusHistory = appendStatusHistory(item.ExternalRef.StatusHistory, target)
 			item.ExternalRef.WritebackState = target
 			item.ExternalRef.WritebackAt = s.now()
-			item.ExternalRef.SyncedAt = s.now()
 		}
 		item.AppendOperation(domain.IssueOperation{At: s.now(), Actor: systemActor, Action: operationWriteback, Detail: "回写外部状态：" + target})
 		return nil

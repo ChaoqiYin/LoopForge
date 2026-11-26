@@ -37,7 +37,7 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "room-target-issue", ProjectID: "platform", Title: "三条流程并行", Status: "todo", WorkflowID: "target-build", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-target"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-target", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-room-target"},
 	}); err != nil {
 		t.Fatal(err)
 	}

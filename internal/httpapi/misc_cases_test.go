@@ -415,7 +415,7 @@ func TestMiscRoomAuthorizationRosterAndSuccessHTTP(t *testing.T) {
 	}
 	if err := f.s.PutIssue(domain.Issue{
 		ID: "cvb-room-issue", ProjectID: project.ID, Title: "synced room issue", Status: "todo", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-room-issue"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-room-issue", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-room-issue"},
 	}); err != nil {
 		t.Fatal(err)
 	}

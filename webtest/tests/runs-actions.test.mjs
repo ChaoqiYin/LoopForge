@@ -109,7 +109,7 @@ test('run helpers merge streams and format timing, output, logs, telemetry, prev
       urls:[vscodeWorkbenchURL('run x',{embed:true}),vscodeWindowName('run x!'),
         previewCandidateHttpsURL('http://example.com:80/path')],
       clean:[runWorkspaceWasCleaned({workspaceCleanedAt:'1970-01-01'}),runWorkspaceWasCleaned({workspaceCleanedAt:'2026-01-01'})],
-      page:[runPageTarget(run,'a'),runDisplayStatus({...run,status:'paused'}),runAwaitsConfirmation({...run,status:'waiting'})]
+      page:[runPageTarget(run,'a'),runDisplayStatus({...run,pauseRequested:true,status:'waiting'}),runAwaitsConfirmation({...run,status:'waiting'})]
     };
   })()`));
   assert.equal(result.mergedStatus, 'running');

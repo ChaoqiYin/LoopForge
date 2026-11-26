@@ -521,10 +521,9 @@ function approvalCardHTML(r){
 }
 
 function externalApprovalItems(){
-  return (state.data.issues||[]).filter(issue=>{
-    const state=workItemExternalState(issue);
-    return state&&/审批|待批|待确认|approval|review/i.test(state);
-  });
+  // The status mapping's explicit awaitingApproval marker is the only source
+  // of truth. Status strings are business vocabulary and must not be guessed.
+  return (state.data.issues||[]).filter(issue=>issue?.externalRef?.awaitingApproval===true);
 }
 
 function externalApprovalRow(issue){

@@ -60,7 +60,7 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.PutIssue(domain.Issue{ID: "i1", ProjectID: "p1", Title: "Fix login", Status: "todo", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-1"}}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "i1", ProjectID: "p1", Title: "Fix login", Status: "todo", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-1", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-1"}}); err != nil {
 		t.Fatal(err)
 	}
 	if code := call(other, "POST", "/api/issues", `{"projectId":"p1","title":"Fix login"}`); code != http.StatusMethodNotAllowed {
@@ -99,7 +99,7 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if saved, _ := s.Issue("i1"); saved.Title != "Fix login" || saved.Status == "closed" {
 		t.Fatalf("issue changed by a non-member: %+v", saved)
 	}
-	if err := s.PutIssue(domain.Issue{ID: "shared-issue", ProjectID: "shared", Title: "Shared idea", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-2"}}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "shared-issue", ProjectID: "shared", Title: "Shared idea", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-2", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-2"}}); err != nil {
 		t.Fatal(err)
 	}
 	if code := call(other, "POST", "/api/issues/shared-issue/comments", `{"body":"shared"}`); code != 200 {
@@ -110,7 +110,7 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutIssue(domain.Issue{ID: "team-issue", ProjectID: "ownerless-team", Title: "Team idea", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-3"}}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "team-issue", ProjectID: "ownerless-team", Title: "Team idea", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-3", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-3"}}); err != nil {
 		t.Fatal(err)
 	}
 	if code := call(other, "POST", "/api/issues/team-issue/comments", `{"body":"outsider"}`); code != 403 {

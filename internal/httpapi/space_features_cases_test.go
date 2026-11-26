@@ -40,7 +40,7 @@ func TestSpaceFeaturesLifecycleAndAuthorization(t *testing.T) {
 	}
 	issue := domain.Issue{
 		ID: "cvb-space-existing-issue", ProjectID: project.ID, Title: "Existing", Status: "todo", Priority: "high", Kind: "issue", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-space-existing"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-space-existing", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-space-existing"},
 	}
 	foreignIssue := domain.Issue{ID: "cvb-space-foreign-issue", ProjectID: foreign.ID, Title: "Foreign", Status: "todo", Priority: "low", Kind: "issue", Source: "local"}
 	if err := f.s.PutIssue(issue); err != nil {
@@ -48,7 +48,7 @@ func TestSpaceFeaturesLifecycleAndAuthorization(t *testing.T) {
 	}
 	if err := f.s.PutIssue(domain.Issue{
 		ID: "cvb-space-second-issue", ProjectID: project.ID, Title: "Second", Status: "todo", Kind: "issue", Source: "feishu_bitable",
-		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-space-second"},
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-space-second", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-space-second"},
 	}); err != nil {
 		t.Fatal(err)
 	}

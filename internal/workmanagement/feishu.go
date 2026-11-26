@@ -44,6 +44,7 @@ var (
 	ErrBusinessKeyMissing             = errors.New("management_business_key_missing")
 	ErrRecordNotFound                 = errors.New("management_record_not_found")
 	ErrWritebackDisabled              = errors.New("management_writeback_disabled")
+	ErrWritebackPaused                = errors.New("management_writeback_paused")
 	ErrReadOnlyTable                  = errors.New("management_table_read_only")
 	ErrDeliveryWritebackNotConfigured = errors.New("management_delivery_writeback_not_configured")
 	ErrSubscribeUnsupported           = errors.New("management_subscribe_unsupported")
@@ -137,6 +138,10 @@ type feishuCredentials struct {
 type feishuField struct {
 	id   string
 	name string
+	// fieldType is the platform field type (or UI type when the numeric type is
+	// absent). Projection caches it so a field_changed event can detect a type
+	// change and stop writing into a reshaped column.
+	fieldType string
 }
 
 // NewFeishuAdapter builds an adapter with production defaults.
@@ -261,20 +266,23 @@ func (a *FeishuAdapter) notReady(err error) domain.ManagementConnectionReadiness
 }
 
 func resolveMappings(mappings []domain.ManagementFieldMapping, fields []feishuField) ([]domain.ManagementFieldMapping, []string) {
-	byName := map[string]string{}
+	byName := map[string]feishuField{}
 	for _, field := range fields {
-		byName[strings.TrimSpace(field.name)] = strings.TrimSpace(field.id)
+		byName[strings.TrimSpace(field.name)] = feishuField{
+			id: strings.TrimSpace(field.id), name: field.name, fieldType: strings.TrimSpace(field.fieldType),
+		}
 	}
 	resolved := make([]domain.ManagementFieldMapping, 0, len(mappings))
 	missing := make([]string, 0)
 	for _, mapping := range mappings {
 		name := strings.TrimSpace(mapping.ExternalFieldName)
-		id, ok := byName[name]
+		field, ok := byName[name]
 		if !ok {
 			missing = append(missing, name)
 			continue
 		}
-		mapping.ExternalFieldID = id
+		mapping.ExternalFieldID = field.id
+		mapping.ExternalFieldType = field.fieldType
 		resolved = append(resolved, mapping)
 	}
 	return resolved, missing
@@ -457,7 +465,13 @@ func (a *FeishuAdapter) listFields(ctx context.Context, conn domain.ManagementCo
 			if item == nil || item.FieldName == nil {
 				continue
 			}
-			out = append(out, feishuField{id: stringValue(item.FieldId), name: *item.FieldName})
+			fieldType := ""
+			if item.Type != nil {
+				fieldType = strconv.Itoa(*item.Type)
+			} else if item.UiType != nil {
+				fieldType = strings.TrimSpace(*item.UiType)
+			}
+			out = append(out, feishuField{id: stringValue(item.FieldId), name: *item.FieldName, fieldType: fieldType})
 		}
 		if resp.Data.HasMore == nil || !*resp.Data.HasMore || resp.Data.PageToken == nil || *resp.Data.PageToken == "" {
 			return out, nil
@@ -534,9 +548,10 @@ func (a *FeishuAdapter) normalizeRecord(conn domain.ManagementConnection, mappin
 		if requireBusinessKey {
 			return domain.ExternalRecord{}, adapterError(ErrBusinessKeyMissing, "记录缺少业务编号字段：%s", name)
 		}
-		// Projection may degrade to the record id and raise an alert; the
-		// adapter still refuses to guess for identity-sensitive reads.
-		businessKey = recordID
+		// Projection degrades to the record id and raises a visible alert. The
+		// adapter keeps the missing value so that degradation stays observable
+		// rather than looking like a legitimate business key.
+		businessKey = ""
 	}
 	title, found := value(domain.WorkItemFieldTitle)
 	if !found || strings.TrimSpace(title) == "" {
@@ -626,6 +641,9 @@ func (a *FeishuAdapter) UpdateExternalStatus(ctx context.Context, conn domain.Ma
 	if !conn.AllowWriteback {
 		return adapterError(ErrWritebackDisabled, "该连接未开启回写，外部状态保持不变")
 	}
+	if conn.WritebackPaused {
+		return adapterError(ErrWritebackPaused, "外部字段结构已变更，自动回写已暂停：%s", strings.TrimSpace(conn.WritebackPausedReason))
+	}
 	status = strings.TrimSpace(status)
 	if status == "" {
 		return adapterError(ErrFeishuRejected, "回写状态不能为空")
@@ -651,6 +669,9 @@ func (a *FeishuAdapter) UpdateExternalStatus(ctx context.Context, conn domain.Ma
 func (a *FeishuAdapter) UpdateDeliverySummary(ctx context.Context, conn domain.ManagementConnection, ref domain.ExternalRef, summary domain.ExternalDeliverySummary) error {
 	if !conn.AllowWriteback {
 		return adapterError(ErrWritebackDisabled, "该连接未开启回写，交付摘要保持不变")
+	}
+	if conn.WritebackPaused {
+		return adapterError(ErrWritebackPaused, "外部字段结构已变更，自动回写已暂停：%s", strings.TrimSpace(conn.WritebackPausedReason))
 	}
 	if len(a.deliveryFields) == 0 {
 		return adapterError(ErrDeliveryWritebackNotConfigured, "未配置交付摘要字段映射，暂不回写交付信息")
