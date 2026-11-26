@@ -56,6 +56,7 @@ func newFakeFeishu(t *testing.T) *fakeFeishu {
 	f.defaults["search"] = map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"items": []any{}, "has_more": false}}
 	f.defaults["batch_get"] = map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"records": []any{}}}
 	f.defaults["batch_update"] = map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"records": []any{}}}
+	f.defaults["subscribe"] = map[string]any{"code": 0, "msg": "ok", "data": map[string]any{}}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.server.Close)
 	return f
@@ -114,6 +115,8 @@ func classifyPath(path string) string {
 		return "batch_get"
 	case strings.Contains(path, "/records/batch_update"):
 		return "batch_update"
+	case strings.Contains(path, "/subscribe"):
+		return "subscribe"
 	case strings.HasSuffix(path, "/fields"):
 		return "fields"
 	}
@@ -622,5 +625,75 @@ func TestFeishuPermissionErrorIsReadable(t *testing.T) {
 	_, err := adapter.ListWorkItems(context.Background(), testConnection(), "", 10)
 	if err == nil || !strings.Contains(UserMessage(err), "可管理者") {
 		t.Fatalf("err = %v, message = %q", err, UserMessage(err))
+	}
+}
+
+func TestFeishuSubscribeEventsUsesFileTokenAndBitableType(t *testing.T) {
+	fake := newFakeFeishu(t)
+	adapter, _ := newTestAdapter(t, fake, &fakeMappingSource{fields: standardMappings()[:3]})
+
+	if err := adapter.SubscribeEvents(context.Background(), testConnection()); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	req, ok := fake.lastRequest("subscribe")
+	if !ok {
+		t.Fatal("subscribe endpoint was not called")
+	}
+	if req.Method != http.MethodPost || !strings.HasSuffix(req.Path, "/files/bascn/subscribe") {
+		t.Fatalf("subscribe request = %+v", req)
+	}
+	if got := req.Query.Get("file_type"); got != "bitable" {
+		t.Fatalf("file_type = %q", got)
+	}
+}
+
+func TestFeishuSubscribeEventsReportsPermission(t *testing.T) {
+	fake := newFakeFeishu(t)
+	fake.setDefault("subscribe", map[string]any{"code": 1061045, "msg": "no permission"})
+	adapter, _ := newTestAdapter(t, fake, &fakeMappingSource{fields: standardMappings()[:3]})
+	err := adapter.SubscribeEvents(context.Background(), testConnection())
+	if err == nil || !errors.Is(err, ErrFeishuPermission) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// The projection read is deliberately lenient: a record without a business
+// key or title still reaches the Work Item projection, which raises an alert
+// and degrades to the record id instead of rejecting the record.
+func TestFeishuReadRecordForProjectionDegradesMissingIdentity(t *testing.T) {
+	fake := newFakeFeishu(t)
+	fake.setDefault("batch_get", map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"records": []any{map[string]any{
+		"record_id": "rec-7", "fields": map[string]any{"状态": "草稿", "描述": "公式结果"},
+	}}}})
+	adapter, _ := newTestAdapter(t, fake, &fakeMappingSource{fields: standardMappings()[:4]})
+
+	record, err := adapter.ReadRecordForProjection(context.Background(), testConnection(), "rec-7")
+	if err != nil {
+		t.Fatalf("read for projection: %v", err)
+	}
+	if record.Ref.BusinessKey != "rec-7" || record.Ref.RecordID != "rec-7" || record.Title != "rec-7" {
+		t.Fatalf("degraded record = %+v", record)
+	}
+	if record.Description != "公式结果" || record.ExternalStatus != "草稿" {
+		t.Fatalf("record fields = %+v", record)
+	}
+	if _, err := adapter.GetWorkItem(context.Background(), testConnection(), domain.ExternalRef{RecordID: "rec-7"}); !errors.Is(err, ErrBusinessKeyMissing) {
+		t.Fatalf("strict read must keep rejecting: %v", err)
+	}
+}
+
+func TestFeishuReadRecordForProjectionResolvesProjectOverride(t *testing.T) {
+	mappings := append(standardMappings()[:4], domain.ManagementFieldMapping{
+		ConnectionID: "conn-1", TableID: "tbl-1", Field: domain.WorkItemFieldProject,
+		ExternalFieldName: "项目", ExternalFieldID: "fld-project",
+	})
+	fake := newFakeFeishu(t)
+	fake.setDefault("batch_get", map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"records": []any{map[string]any{
+		"record_id": "rec-1", "fields": map[string]any{"业务编号": "REQ-1", "标题": "需求", "项目": "proj-other"},
+	}}}})
+	adapter, _ := newTestAdapter(t, fake, &fakeMappingSource{fields: mappings})
+	record, err := adapter.ReadRecordForProjection(context.Background(), testConnection(), "rec-1")
+	if err != nil || record.ProjectID != "proj-other" {
+		t.Fatalf("project override = %+v %v", record, err)
 	}
 }

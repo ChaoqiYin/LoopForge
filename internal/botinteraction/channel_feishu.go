@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,11 +39,18 @@ type feishuChannel struct {
 	// acknowledges within Feishu's three-second window.
 	ackTimeout time.Duration
 	readyWait  time.Duration
+	// extraEvents installs additional dispatcher handlers (for example
+	// Bitable record changes) on every long-connection attempt.
+	extraEvents func(*dispatcher.EventDispatcher)
 }
 
 func newFeishuChannel() *feishuChannel {
+	base := strings.TrimSpace(os.Getenv("AGENTFLOW_FEISHU_BASE_URL"))
+	if base == "" {
+		base = lark.FeishuBaseUrl
+	}
 	return &feishuChannel{
-		base:       lark.FeishuBaseUrl,
+		base:       base,
 		http:       &http.Client{Timeout: sendTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		ackTimeout: 2500 * time.Millisecond,
 		readyWait:  15 * time.Second,
@@ -50,6 +58,17 @@ func newFeishuChannel() *feishuChannel {
 }
 
 func (f *feishuChannel) Kind() string { return ChannelFeishu }
+
+// SetFeishuEventRegistrar installs extra event handlers on the shared Feishu
+// long-connection dispatcher. It is additive: existing message and card
+// handlers stay in place. Register before the Bot connection is established.
+func (s *Service) SetFeishuEventRegistrar(register func(*dispatcher.EventDispatcher)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ch, ok := s.channels[ChannelFeishu].(*feishuChannel); ok {
+		ch.extraEvents = register
+	}
+}
 
 func (f *feishuChannel) client(bot domain.NotificationBot, cred Credential) *lark.Client {
 	return lark.NewClient(bot.BotID, cred.Secret,
@@ -109,6 +128,9 @@ func (f *feishuChannel) Connect(ctx context.Context, bot domain.NotificationBot,
 		}
 		return feishuCardAnswer(ack), nil
 	})
+	if f.extraEvents != nil {
+		f.extraEvents(handler)
+	}
 	ready := make(chan struct{})
 	var readyOnce sync.Once
 	conn.ws = larkws.NewClient(bot.BotID, cred.Secret,

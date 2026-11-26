@@ -38,12 +38,16 @@ const (
 	WorkItemFieldAcceptanceCriteria WorkItemField = "acceptance_criteria"
 	WorkItemFieldRepository         WorkItemField = "repository"
 	WorkItemFieldExternalURL        WorkItemField = "external_url"
+	// WorkItemFieldProject optionally overrides the connection's default
+	// Project per external record.
+	WorkItemFieldProject WorkItemField = "project"
 )
 
 var workItemFields = []WorkItemField{
 	WorkItemFieldBusinessKey, WorkItemFieldTitle, WorkItemFieldStatus,
 	WorkItemFieldDescription, WorkItemFieldPriority, WorkItemFieldAssignee,
 	WorkItemFieldAcceptanceCriteria, WorkItemFieldRepository, WorkItemFieldExternalURL,
+	WorkItemFieldProject,
 }
 
 var requiredWorkItemFields = []WorkItemField{
@@ -487,9 +491,12 @@ type ExternalRecord struct {
 	Assignee           string      `json:"assignee,omitempty"`
 	AcceptanceCriteria string      `json:"acceptanceCriteria,omitempty"`
 	Repository         string      `json:"repository,omitempty"`
-	ExternalStatus     string      `json:"externalStatus,omitempty"`
-	ExternalURL        string      `json:"externalUrl,omitempty"`
-	ModifiedAt         time.Time   `json:"modifiedAt,omitempty"`
+	// ProjectID optionally overrides the connection's default Project. It is
+	// resolved by the projection, never written to the external platform.
+	ProjectID      string    `json:"projectId,omitempty"`
+	ExternalStatus string    `json:"externalStatus,omitempty"`
+	ExternalURL    string    `json:"externalUrl,omitempty"`
+	ModifiedAt     time.Time `json:"modifiedAt,omitempty"`
 }
 
 // ExternalRecordPage is one page of listed external records.
