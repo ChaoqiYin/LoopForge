@@ -238,6 +238,7 @@ func (s *Service) writebackStatus(ctx context.Context, conn domain.ManagementCon
 	_, err := s.patchIssue(issue.ID, func(item *domain.Issue) error {
 		if item.ExternalRef != nil {
 			item.ExternalRef.ExternalState = target
+			item.ExternalRef.StatusHistory = appendStatusHistory(item.ExternalRef.StatusHistory, target)
 			item.ExternalRef.WritebackState = target
 			item.ExternalRef.WritebackAt = s.now()
 			item.ExternalRef.SyncedAt = s.now()
