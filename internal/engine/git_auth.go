@@ -119,6 +119,63 @@ func resolveGitHubToken(s *repo.Store, userID int64) string {
 	return ""
 }
 
+// applyRepositoryServiceCredentials overlays repository-level encrypted Git
+// service credentials on the run snapshot. A service credential wins over the
+// matching user-level HTTP host or SSH remote because external triggers may
+// have no logged-in user to borrow credentials from.
+func (e *Engine) applyRepositoryServiceCredentials(credentials *runtime.RunCredentials, repositories []domain.RepositoryContext) {
+	if e == nil || e.repo == nil || credentials == nil {
+		return
+	}
+	for _, rc := range repositories {
+		if strings.TrimSpace(rc.RepositoryID) == "" {
+			continue
+		}
+		repository, ok := e.repo.Repository(rc.RepositoryID)
+		if !ok || strings.TrimSpace(repository.ServiceCredentialID) == "" {
+			continue
+		}
+		credential, ok := e.repo.RepositoryGitCredential(repository.ServiceCredentialID)
+		if !ok {
+			continue
+		}
+		secret, err := e.repo.RepositoryGitCredentialSecret(credential.ID)
+		if err != nil || secret == "" {
+			continue
+		}
+		switch credential.Kind {
+		case domain.RepositoryGitCredentialHTTPS:
+			endpoint, err := domain.ParseGitHTTPEndpoint(credential.Host)
+			if err != nil {
+				continue
+			}
+			if credentials.GitHTTPCredentials == nil {
+				credentials.GitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{}
+			}
+			host := endpoint.Scope()
+			platform := domain.GitPlatformOther
+			if strings.EqualFold(endpoint.Hostname(), "github.com") {
+				platform = domain.GitPlatformGitHub
+			}
+			credentials.GitHTTPCredentials[host] = domain.GitHTTPExecutionCredential{
+				GitHTTPCredential: domain.GitHTTPCredential{
+					ID: credential.ID, Name: credential.Name, Platform: platform,
+					Host: host, Username: credential.Username,
+				},
+				Token: secret,
+			}
+		case domain.RepositoryGitCredentialSSH:
+			if rc.Provider != domain.RepositoryProviderSSH && !gitwork.IsSSHReference(rc.CloneURL) {
+				continue
+			}
+			if credentials.GitSSHKeys == nil {
+				credentials.GitSSHKeys = map[string]string{}
+			}
+			credentials.GitSSHKeys[rc.CloneURL] = secret
+		}
+	}
+}
+
 var (
 	gitCommandFailure = regexp.MustCompile(`(?i)repository checkout|git (clone|fetch|pull|push|ls-remote)`)
 	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)

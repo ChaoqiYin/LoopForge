@@ -166,3 +166,11 @@ func (r *UsersRepo) RepositoryGitCredentialSecret(id string) (string, error) {
 func (r *UsersRepo) DeleteRepositoryGitCredential(id string) error {
 	return r.DB.Where("id = ?", strings.TrimSpace(id)).Delete(&repositoryGitCredentialRow{}).Error
 }
+
+// DeleteRepositoryGitCredentialsForRepository removes every service credential
+// of one repository. Repository deletion calls it so credentials never outlive
+// the repository they belong to.
+func (r *UsersRepo) DeleteRepositoryGitCredentialsForRepository(repositoryID string) error {
+	return r.DB.Where("repository_id = ?", strings.TrimSpace(repositoryID)).
+		Delete(&repositoryGitCredentialRow{}).Error
+}

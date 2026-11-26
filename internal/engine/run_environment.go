@@ -219,6 +219,10 @@ func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	}
 	credentials.Extra = runtime.ExtraRunCredentials(userID)
 	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
+	// Repository-level service credentials are resolved for every entry point,
+	// including externally triggered runs without a responsible user. They take
+	// priority over the user's optional per-host override.
+	e.applyRepositoryServiceCredentials(&credentials, run.RepositoryContexts())
 	identity := resolveGitIdentity(e.repo, userID)
 	credentials.GitUserName = identity.name
 	credentials.GitUserEmail = identity.email

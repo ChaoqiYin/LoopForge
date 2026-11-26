@@ -74,3 +74,33 @@ func TestRepositoryGitServiceCredentialSealsSecret(t *testing.T) {
 		t.Fatal("deleted credential secret should not open")
 	}
 }
+
+func TestDeleteRepositoryGitCredentialsRemovesOnlyThatRepository(t *testing.T) {
+	s, err := OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+
+	for _, item := range []struct{ repoID, credentialID string }{
+		{"repo-1", "cred-1"},
+		{"repo-1", "cred-2"},
+		{"repo-2", "cred-3"},
+	} {
+		if _, err := s.PutRepositoryGitCredential(item.repoID, item.credentialID, domain.RepositoryGitCredentialInput{
+			Name: item.credentialID, Kind: domain.RepositoryGitCredentialSSH,
+			Host: "git.example.com", Secret: "key",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteRepositoryGitCredentialsForRepository("repo-1"); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := s.RepositoryGitCredentials("repo-1"); err != nil || len(list) != 0 {
+		t.Fatalf("repo-1 credentials = %+v, %v", list, err)
+	}
+	if list, err := s.RepositoryGitCredentials("repo-2"); err != nil || len(list) != 1 || list[0].ID != "cred-3" {
+		t.Fatalf("repo-2 credentials = %+v, %v", list, err)
+	}
+}
