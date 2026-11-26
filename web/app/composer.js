@@ -378,16 +378,7 @@ async function closeRequirementComposer(){
   clearRequirementComposer();
 }
 function openRequirementWizard(){
-  if(!(state.data.projects||[]).length){switchView('projects');return toast('请先创建项目')}
-  if(requirementComposerOpen()){
-    setTimeout(()=>$('#chatInput')?.focus(),0);
-    return;
-  }
-  resetRequirementComposer();
-  clearRequirementComposer();
-  $('#requirementModal').classList.add('open');
-  persistRequirementComposer();
-  setTimeout(()=>$('#chatInput').focus(),0);
+  toast('本地建单已关闭：请在外部管理工作台创建 Work Item，平台会同步显示');
 }
 function parseClarifyPayload(data){
   if(data?.parsed && typeof data.parsed==='object') return normalizeClarifyParsed(data.parsed);
@@ -447,6 +438,9 @@ async function pushIssueToTAPDFromDetail(issueId){
 // createIssueFromChat 直接建单，不再在弹窗里澄清。mode 为 'chat' 时建单后打开
 // AI 工作台的新对话，并 @ 这个需求，在对话里把需求聊清楚。
 async function createIssueFromChat(target,mode){
+  state.reqCreating='';
+  toast('本地建单已关闭：请在外部管理工作台创建 Work Item');
+  return;
   target=target||state.reqTarget||'local';
   const toChat=mode==='chat';
   if(target!=='local'&&target!=='tapd')return toast('请选择平台或 TAPD');

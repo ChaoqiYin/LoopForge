@@ -31,58 +31,6 @@ func TestNormalizeIssueBaseBranch(t *testing.T) {
 	}
 }
 
-func TestIssueBaseBranchCreateEditAndDefault(t *testing.T) {
-	st, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	repository := domain.Repository{ID: "branch-repo", ProjectID: "platform", Name: "Branch repo", DefaultBranch: "main"}
-	if err := st.PutRepository(repository); err != nil {
-		t.Fatal(err)
-	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "继续已有开发", "repositoryId": repository.ID, "baseBranch": " feature/continue-work ",
-	}, http.StatusOK)
-	if created.BaseBranch != "feature/continue-work" {
-		t.Fatalf("custom base branch not persisted: %+v", created)
-	}
-	if _, err := st.PatchIssue(created.ID, func(issue *domain.Issue) error {
-		issue.Clarification.SessionID = "original-branch-session"
-		issue.Clarification.SessionUserID = 42
-		issue.Clarification.Summary = "保留业务范围"
-		issue.Clarification.History = []domain.ClarificationMessage{{Role: "user", Content: "保留业务回答"}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	edited := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "title": "继续已有开发并补充测试",
-	}, http.StatusOK)
-	if edited.BaseBranch != created.BaseBranch || edited.Clarification.SessionID != "original-branch-session" {
-		t.Fatalf("omitted baseBranch must preserve existing selection: %+v", edited)
-	}
-	reset := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "baseBranch": "",
-	}, http.StatusOK)
-	if reset.BaseBranch != "" {
-		t.Fatalf("explicit blank must restore dynamic default: %+v", reset)
-	}
-	if reset.Clarification.SessionID != "" || reset.Clarification.SessionUserID != 0 || reset.Clarification.Summary != "保留业务范围" || len(reset.Clarification.History) != 1 {
-		t.Fatalf("branch changes must discard the code session and preserve business answers: %+v", reset.Clarification)
-	}
-	if len(reset.Operations) == 0 || !strings.Contains(reset.Operations[len(reset.Operations)-1].Detail, "工作分支改为自动新建") {
-		t.Fatalf("base branch change missing from audit log: %+v", reset.Operations)
-	}
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "非法基线", "repositoryId": repository.ID, "baseBranch": "feature/foo~1",
-	}, http.StatusBadRequest)
-	requestJSON[map[string]any](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "没有仓库", "baseBranch": "feature/continue-work",
-	}, http.StatusBadRequest)
-}
-
 func TestIssueBaseBranchRejectsMultiRepoCustomAndKeepsLegacyDefault(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {
@@ -244,14 +192,13 @@ func TestIssueRepositoryChangeInvalidatesClarifySession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	issue := domain.Issue{ID: "repo-switch", ProjectID: "platform", Title: "更换分析仓库", RepositoryID: "original-repo", BaseBranch: "feature/continue",
+	previous := domain.Issue{ID: "repo-switch", ProjectID: "platform", Title: "更换分析仓库", RepositoryID: "original-repo", BaseBranch: "feature/continue",
 		Clarification: domain.ClarificationAssessment{SessionID: "original-repo-session", SessionUserID: 42, Summary: "保留回答"}}
-	if err := st.PutIssue(issue); err != nil {
-		t.Fatal(err)
-	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{"id": issue.ID, "repositoryId": "new-repo"}, http.StatusOK)
-	if updated.BaseBranch != issue.BaseBranch || updated.Clarification.SessionID != "" || updated.Clarification.SessionUserID != 0 || updated.Clarification.Summary != "保留回答" {
+	updated := previous
+	updated.RepositoryID, updated.RepositoryIDs = "new-repo", []string{"new-repo"}
+	h := &issuesHandlers{deps: &deps{repo: st}}
+	h.invalidateIssueClarifySessionOnRepositoryChange(&updated, previous)
+	if updated.BaseBranch != previous.BaseBranch || updated.Clarification.SessionID != "" || updated.Clarification.SessionUserID != 0 || updated.Clarification.Summary != "保留回答" {
 		t.Fatalf("repository changes must invalidate the old code session: %+v", updated)
 	}
 }
@@ -308,11 +255,10 @@ func TestDispatchEmptyBaseBranchUsesCurrentConfiguredMainBranch(t *testing.T) {
 	}
 	eng := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := New(st, eng, tracker.NewService(), "", "")
-	issue := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "沿用项目仓库主分支", "kind": "issue", "repositoryId": repository.ID, "baseBranch": "", "workflowId": "configured-main-flow",
-	}, http.StatusOK)
-	if issue.BaseBranch != "" {
-		t.Fatalf("blank baseline must remain dynamic: %+v", issue)
+	issue := domain.Issue{ID: "configured-main-issue", ProjectID: "platform", Title: "沿用项目仓库主分支", Kind: "issue",
+		RepositoryID: repository.ID, BaseBranch: "", WorkflowID: "configured-main-flow"}
+	if err := st.PutIssue(issue); err != nil {
+		t.Fatal(err)
 	}
 	repository.DefaultBranch = "develop/current-main"
 	if err := st.PutRepository(repository); err != nil {
@@ -327,36 +273,6 @@ func TestDispatchEmptyBaseBranchUsesCurrentConfiguredMainBranch(t *testing.T) {
 	if !strings.Contains(run.Input, "merge request target branch: "+repository.DefaultBranch) {
 		t.Fatalf("MR target ignored configured main branch: %s", run.Input)
 	}
-}
-
-func TestIssueRejectsExplicitSharedWorkBranchesAndNormalizesLegacyEdits(t *testing.T) {
-	st, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	repository := domain.Repository{ID: "shared-branch-repo", ProjectID: "platform", Name: "Repo", DefaultBranch: "release/main", IntegrateBranch: "agentflow/integration"}
-	if err := st.PutRepository(repository); err != nil {
-		t.Fatal(err)
-	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	for _, branch := range []string{repository.DefaultBranch, repository.IntegrateBranch, "master", "main"} {
-		response := requestJSON[map[string]string](t, h, http.MethodPost, "/api/issues", map[string]any{
-			"projectId": "platform", "title": "不可直接处理共享分支", "repositoryId": repository.ID, "baseBranch": branch,
-		}, http.StatusBadRequest)
-		if !strings.Contains(response["error"], "共享分支") {
-			t.Fatalf("shared branch must produce an actionable validation error: %+v", response)
-		}
-	}
-	legacy := domain.Issue{ID: "legacy-default-branch", ProjectID: "platform", Title: "旧默认分支记录", RepositoryID: repository.ID, BaseBranch: repository.DefaultBranch}
-	if err := st.PutIssue(legacy); err != nil {
-		t.Fatal(err)
-	}
-	updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{"id": legacy.ID, "title": "仅修改标题"}, http.StatusOK)
-	if updated.BaseBranch != "" {
-		t.Fatalf("partial edit must normalize the legacy default baseline: %+v", updated)
-	}
-	requestJSON[map[string]string](t, h, http.MethodPut, "/api/issues", map[string]any{"id": legacy.ID, "baseBranch": repository.DefaultBranch}, http.StatusBadRequest)
 }
 
 func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t *testing.T) {
@@ -391,42 +307,8 @@ func TestDispatchLegacyDefaultBranchCreatesNewWorkBranchWithoutChangingRecord(t 
 	}
 }
 
-func TestIssueSaveEchoingLegacySharedBranchNormalizes(t *testing.T) {
-	st, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	repository := domain.Repository{ID: "echo-shared-repo", ProjectID: "platform", Name: "Repo", DefaultBranch: "develop"}
-	if err := st.PutRepository(repository); err != nil {
-		t.Fatal(err)
-	}
-	h := New(st, engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces"))), tracker.NewService(), "", "")
-	for _, legacyBranch := range []string{"develop", "master"} {
-		legacy := domain.Issue{ID: "echo-legacy-" + legacyBranch, ProjectID: "platform", Title: "旧记录", RepositoryID: repository.ID, BaseBranch: legacyBranch}
-		if err := st.PutIssue(legacy); err != nil {
-			t.Fatal(err)
-		}
-		updated := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-			"id": legacy.ID, "projectId": "platform", "title": "AI 更新标题", "repositoryId": repository.ID, "baseBranch": legacyBranch,
-		}, http.StatusOK)
-		if updated.BaseBranch != "" || updated.Title != "AI 更新标题" {
-			t.Fatalf("echoing the stored legacy branch %q must normalize instead of failing: %+v", legacyBranch, updated)
-		}
-	}
-	feature := domain.Issue{ID: "echo-feature", ProjectID: "platform", Title: "功能分支", RepositoryID: repository.ID, BaseBranch: "feature/keep"}
-	if err := st.PutIssue(feature); err != nil {
-		t.Fatal(err)
-	}
-	kept := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{"id": feature.ID, "title": "改标题", "baseBranch": "feature/keep"}, http.StatusOK)
-	if kept.BaseBranch != "feature/keep" {
-		t.Fatalf("echoing a valid work branch must keep it: %+v", kept)
-	}
-	requestJSON[map[string]string](t, h, http.MethodPut, "/api/issues", map[string]any{"id": feature.ID, "baseBranch": "master"}, http.StatusBadRequest)
-}
-
 func TestAssistantIssueDraftRewritesGenericMainBranch(t *testing.T) {
-	draft := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"projectId":"platform","title":"新需求","repositoryIds":["a","b"],"baseBranch":"master","repositoryBranches":{"a":"main","b":"feature/keep"}}`)}
+	draft := assistantDraft{Tool: "issues_import_tapd", Body: json.RawMessage(`{"projectId":"platform","url":"https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001332","repositoryIds":["a","b"],"baseBranch":"master","repositoryBranches":{"a":"main","b":"feature/keep"}}`)}
 	if err := validateAssistantDraft(&draft, "platform"); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +320,7 @@ func TestAssistantIssueDraftRewritesGenericMainBranch(t *testing.T) {
 	if body["baseBranch"] != "" || len(branches) != 1 || branches["b"] != "feature/keep" {
 		t.Fatalf("generic main branch names must mean auto-create from configured main: %s", draft.Body)
 	}
-	other := assistantDraft{Tool: "issues_save", Body: json.RawMessage(`{"projectId":"platform","title":"继续","baseBranch":"feature/x"}`)}
+	other := assistantDraft{Tool: "issues_import_tapd", Body: json.RawMessage(`{"projectId":"platform","url":"https://tapd.example.com/tapd_fe/10000000/story/detail/1010000000100001332","repositoryIds":["a"],"baseBranch":"feature/x"}`)}
 	if err := validateAssistantDraft(&other, "platform"); err != nil || !strings.Contains(string(other.Body), "feature/x") {
 		t.Fatalf("feature branches must be untouched: %s %v", other.Body, err)
 	}

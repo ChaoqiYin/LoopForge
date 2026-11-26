@@ -155,7 +155,7 @@ function renderIssues(){
     return;
   }
   const emptyTitle=state.issueRunFilter==='attention'?'没有需要介入的工作项':state.issueRunFilter==='mr'?'没有待处理 MR 的需求':'当前项目没有匹配的工作项';
-  const emptyHint=state.issueRunFilter==='attention'?'待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从 GitHub 同步，或在本平台新建需求。';
+  const emptyHint=state.issueRunFilter==='attention'?'待确认澄清结论、门禁失败、运行失败或已中断的工作项会显示在这里。':state.issueRunFilter==='mr'?'已提 MR 但还没合入的需求会显示在这里。':'从外部管理工作台同步 Work Item 后会显示在这里。';
   const keyWidth=issueKeyColumnWidth(paged.items);
   const pager=pagerHTML('issues',paged)||(paged.total?`<nav class="pager pager-summary" aria-label="分页"><span class="pager-meta">共 ${paged.total} 条</span></nav>`:'');
   board.innerHTML=`<div class="issue-table-card"><div class="issue-table-scroll"><div class="issue-table${state.issueSelectionMode?' issue-table-selectable':''}" data-page-anchor="issues" style="--issue-col-key:${keyWidth}"><div class="issue-table-row issue-table-head" role="row">${state.issueSelectionMode?`<div class="issue-select-cell">${issueSelectAllCheckbox('全选本页可删除的需求')}</div>`:''}<span>编号</span><span>标题</span><span>来源</span><span>责任人</span><span>仓库</span><span>优先级</span><span>关联 SOP</span><span>当前环节</span><span>进度</span><span>操作</span></div><div class="issue-table-body">${paged.items.map(issueRow).join('')||`<div class="issue-table-empty">${huiIcon('search')}<b>${emptyTitle}</b><p>${emptyHint}</p></div>`}</div></div></div>${pager}</div>`;
@@ -479,6 +479,8 @@ function fillIssueAssignees(projectId,value=''){
   bindUserSearches(f);
 }
 function openIssue(issue=null){
+  toast('Work Item 只读：请在外部管理工作台维护需求内容');
+  return;
   state.selectedIssue=issue?.id||null;
   const f=$('#issueForm'),projects=state.data.projects||[];
   f.elements.projectId.innerHTML=projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
@@ -822,7 +824,6 @@ async function retriggerIssue(issueId,workflowId){
     let target=issue;
     if(deliveryLocked(target))target=await reopenDeliveredIssueSilent(target.id);
     const wf=String(workflowId||'').trim()||target.workflowId||defaultSOPForIssue(target);
-    if(!String(target.workflowId||'').trim())target=await persistIssue({...target,workflowId:wf});
     const ran=!!(state.data.tasks||[]).some(t=>t.issueId===target.id&&t.workflowId===wf);
     await dispatchIssueById(target.id,ran,wf);
   }catch(err){toast(err.message)}

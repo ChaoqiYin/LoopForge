@@ -20,7 +20,6 @@ var assistantDraftScope = map[string]string{
 	"business_domains_save":     "global",
 	"sync_config_save":          "global",
 	"repositories_save":         "project",
-	"issues_save":               "project",
 	"issues_clarification_save": "project",
 	"agents_save":               "project",
 	"rules_save":                "project",

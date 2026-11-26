@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"encoding/json"
+
 	"agentflow/internal/domain"
+	"agentflow/internal/engine"
 	"agentflow/internal/repo"
+	"agentflow/internal/runtime"
 	"agentflow/internal/tracker"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,17 +35,33 @@ func latestIssueOperation(t *testing.T, s *repo.Store, action string) domain.Iss
 	return found
 }
 
-// A requirement created from a WeCom chat must name both identities: the
-// platform account the write ran as, and the WeCom member who asked for it.
+// A write executed from a chat must name both identities: the platform
+// account the write ran as, and the IM member who asked for it. Local issue
+// creation is closed, so dispatch is the remaining chat-triggered issue write.
 func TestIssueOperationNamesWeComSenderOnConfirmedDraft(t *testing.T) {
-	s, h, _, ask := confirmModeFixture(t)
+	s, h, bot := dispatchAttributionFixture(t, domain.BotChannelWeCom)
 	member, _ := s.User(43)
-	id := ask()
-	code, done := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true)
+	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
+		session := botTestToolSession(t, user.ID)
+		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{
+			Message: "我会启动这个需求。",
+			Drafts:  []assistantDraft{{Tool: "issues_dispatch", Path: map[string]any{"id": "attribution-dispatch"}, Body: json.RawMessage(`{}`)}},
+		}})
+		return "", nil
+	}
+	reply, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, domain.BotInteraction{ID: "turn-attribution-confirm", SenderID: "new-wecom-user", Content: "帮我把这个需求跑起来"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := botDraftLink.FindStringSubmatch(reply)
+	if m == nil {
+		t.Fatalf("no confirmation link in %q", reply)
+	}
+	code, done := draftCall(t, h, member, "POST", "/api/bot-drafts/"+m[1]+"/confirm", true)
 	if code != 200 || done["status"] != repo.BotDraftExecuted {
 		t.Fatalf("confirm = %d %v", code, done)
 	}
-	op := latestIssueOperation(t, s, "create")
+	op := latestIssueOperation(t, s, "dispatch")
 	if op.ActorChannel != domain.BotChannelWeCom || op.ActorSender != "new-wecom-user" {
 		t.Fatalf("chat attribution = %q %q", op.ActorChannel, op.ActorSender)
 	}
@@ -54,18 +74,24 @@ func TestIssueOperationNamesWeComSenderOnConfirmedDraft(t *testing.T) {
 // of going through a confirmation card.
 func TestIssueOperationNamesWeComSenderOnAutoWrite(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "bot-attribution-test-session-secret")
-	s, h, bot := botFixture(t)
-	h.api = New(s, h.engine, tracker.NewService(), "", "")
-	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
-		session := botTestToolSession(t, user.ID)
-		body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "自动写入的需求"})
-		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "已创建。", Drafts: []assistantDraft{{Tool: "issues_save", Body: body}}}})
-		return "", nil
-	}
-	if _, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, domain.BotInteraction{ID: "turn-auto", SenderID: "new-wecom-user", Content: "帮我建个需求"}); err != nil {
+	s, h, bot := dispatchAttributionFixture(t, domain.BotChannelWeCom)
+	bot.WriteApproval = domain.BotWriteAuto
+	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
 		t.Fatal(err)
 	}
-	op := latestIssueOperation(t, s, "create")
+	bot, _ = s.NotificationBot(bot.ID)
+	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
+		session := botTestToolSession(t, user.ID)
+		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{
+			Message: "已启动。",
+			Drafts:  []assistantDraft{{Tool: "issues_dispatch", Path: map[string]any{"id": "attribution-dispatch"}, Body: json.RawMessage(`{}`)}},
+		}})
+		return "", nil
+	}
+	if _, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, domain.BotInteraction{ID: "turn-attribution-auto", SenderID: "new-wecom-user", Content: "帮我跑个需求"}); err != nil {
+		t.Fatal(err)
+	}
+	op := latestIssueOperation(t, s, "dispatch")
 	if op.ActorChannel != domain.BotChannelWeCom || op.ActorSender != "new-wecom-user" {
 		t.Fatalf("chat attribution = %q %q", op.ActorChannel, op.ActorSender)
 	}
@@ -78,51 +104,46 @@ func TestIssueOperationNamesWeComSenderOnAutoWrite(t *testing.T) {
 // not only a staff ID.
 func TestIssueOperationNamesDingTalkSender(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "bot-attribution-dingtalk-secret")
-	s, h, bot := botFixture(t)
-	bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-dingtalk", "app-dingtalk", domain.BotChannelDingTalk, "tenant", domain.BotTenantLocked
+	s, h, bot := dispatchAttributionFixture(t, domain.BotChannelDingTalk)
 	bot.WriteApproval = domain.BotWriteAuto
 	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
 		t.Fatal(err)
 	}
 	bot, _ = s.NotificationBot(bot.ID)
-	bindBotTestUser(t, s, bot, "staff-1", 43)
-	h.api = New(s, h.engine, tracker.NewService(), "", "")
 	h.generate = func(ctx context.Context, prompt string, user domain.User) (string, error) {
 		session := botTestToolSession(t, user.ID)
-		body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "钉钉发起的需求"})
-		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "已创建。", Drafts: []assistantDraft{{Tool: "issues_save", Body: body}}}})
+		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{
+			Message: "已启动。",
+			Drafts:  []assistantDraft{{Tool: "issues_dispatch", Path: map[string]any{"id": "attribution-dispatch"}, Body: json.RawMessage(`{}`)}},
+		}})
 		return "", nil
 	}
-	item := domain.BotInteraction{ID: "turn-ding", SenderID: "staff-1", SenderName: "张三", Content: "帮我建个需求"}
+	item := domain.BotInteraction{ID: "turn-ding", SenderID: "staff-1", SenderName: "张三", Content: "帮我把这个需求跑起来"}
 	if _, err := h.generateBotReply(context.Background(), bot, domain.BotConversation{SessionID: "bot-session", ChatType: "single"}, nil, item); err != nil {
 		t.Fatal(err)
 	}
-	op := latestIssueOperation(t, s, "create")
+	op := latestIssueOperation(t, s, "dispatch")
 	if op.ActorChannel != domain.BotChannelDingTalk || op.ActorSender != "staff-1" || op.ActorSenderName != "张三" {
 		t.Fatalf("chat attribution = %q %q %q", op.ActorChannel, op.ActorSender, op.ActorSenderName)
 	}
 }
 
-// The issue audit trail is managed by the server, including on creation.
-func TestIssueAuditTrailIsServerOwnedOnPlatformCreate(t *testing.T) {
+// The issue audit trail is managed by the server on every remaining write
+// path, so a caller cannot inject its own operations.
+func TestIssueAuditTrailIsServerOwnedOnDispatch(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "platform-issue-audit-test-secret")
-	s, h, _ := botFixture(t)
+	s, h, _ := dispatchAttributionFixture(t, domain.BotChannelWeCom)
 	member, _ := s.User(43)
 	api := New(s, h.engine, tracker.NewService(), "", "")
-	draft := domain.Issue{ID: "i-platform", ProjectID: "p", Title: "平台页面创建", Operations: []domain.IssueOperation{{Action: "update"}}}
-	body, err := json.Marshal(draft)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := authedRequest(t, httptest.NewRequest(http.MethodPut, "/api/issues", strings.NewReader(string(body))), member)
+	req := authedRequest(t, httptest.NewRequest(http.MethodPost, "/api/issues/attribution-dispatch/dispatch", strings.NewReader(`{"operations":[{"action":"create"}]}`)), member)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	api.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("dispatch = %d %s", rec.Code, rec.Body.String())
 	}
-	issue, _ := s.Issue(draft.ID)
-	if len(issue.Operations) != 1 || issue.Operations[0].Action != "create" {
+	issue, _ := s.Issue("attribution-dispatch")
+	if len(issue.Operations) != 1 || issue.Operations[0].Action != "dispatch" {
 		t.Fatalf("operations = %+v", issue.Operations)
 	}
 	op := issue.Operations[0]
@@ -132,6 +153,44 @@ func TestIssueAuditTrailIsServerOwnedOnPlatformCreate(t *testing.T) {
 	if op.ActorUserID != 43 {
 		t.Fatalf("platform actor = %q %d", op.Actor, op.ActorUserID)
 	}
+}
+
+// dispatchAttributionFixture prepares a project, SOP and Work Item that a
+// chat write can dispatch. The Work Item is seeded directly because local
+// creation is closed; only the external manager creates Work Items now.
+func dispatchAttributionFixture(t *testing.T, channel string) (*repo.Store, *assistantHandlers, domain.NotificationBot) {
+	t.Helper()
+	s, h, bot := botFixture(t)
+	bot.WriteApproval = domain.BotWriteConfirm
+	if channel == domain.BotChannelDingTalk {
+		bot.ID, bot.BotID, bot.Channel, bot.TenantKey, bot.TenantState = "b-dingtalk", "app-dingtalk", domain.BotChannelDingTalk, "tenant", domain.BotTenantLocked
+	}
+	if err := s.SaveNotificationBot(bot, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	bot, _ = s.NotificationBot(bot.ID)
+	if channel == domain.BotChannelDingTalk {
+		bindBotTestUser(t, s, bot, "staff-1", 43)
+	}
+	wf := domain.WorkflowDefinition{
+		ID: "attribution-wf", Name: "Attribution", ProjectID: "p", Version: 1,
+		Status: "published", SandboxProfileID: repo.TestNativeSandboxID,
+		Nodes: []domain.WorkflowNode{{ID: "approval", Name: "Approval", Type: "approval", MaxAttempts: 1}},
+	}
+	if err := s.PutWorkflow(wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutIssue(domain.Issue{ID: "attribution-dispatch", ProjectID: "p", Title: "聊天触发的需求", Status: "todo", WorkflowID: wf.ID}); err != nil {
+		t.Fatal(err)
+	}
+	h.engine = engine.New(s, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
+	h.api = New(s, h.engine, tracker.NewService(), "", "")
+	t.Cleanup(func() {
+		for _, run := range s.Runs() {
+			_ = h.engine.Cancel(run.ID)
+		}
+	})
+	return s, h, bot
 }
 
 // withBotChatActor normalizes the channel and ignores calls without a

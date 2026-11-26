@@ -187,8 +187,11 @@ func TestScheduledCatalogExposesWritePlatformToolsWithoutSubmit(t *testing.T) {
 	deferred := &AgentToolSession{Mode: AgentToolScheduled, ExecMode: assistantExecMode{AutoWrite: true, DeferSOP: true}, ExpiresAt: time.Now().Add(time.Minute), Final: make(chan AgentTerminalResult, 1)}
 	catalog := gw.buildCatalog(nil, deferred)
 	joined := catalogToolNames(catalog)
-	if !strings.Contains(joined, "agentflow__issues_save") || !strings.Contains(joined, "agentflow__issues_list") {
+	if !strings.Contains(joined, "agentflow__agents_save") || !strings.Contains(joined, "agentflow__issues_list") {
 		t.Fatalf("scheduled catalog should expose platform writes: %s", joined)
+	}
+	if strings.Contains(joined, "issues_save") {
+		t.Fatalf("local issue creation must stay closed: %s", joined)
 	}
 	if strings.Contains(joined, "issues_dispatch") || strings.Contains(joined, "runs_start") || strings.Contains(joined, "workflows_publish") {
 		t.Fatalf("DeferSOP tools leaked into scheduled catalog: %s", joined)
@@ -252,13 +255,13 @@ func TestScheduledAgentToolWritesPlatformAndDefersSOP(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
-	body := call(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agentflow__issues_save","arguments":{"path":{"id":"iss-sched"},"body":{"id":"iss-sched","automationState":"ignored"}}}}`)
+	body := call(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agentflow__agents_save","arguments":{"body":{"id":"sched-agent","name":"定时角色","projectId":"platform"}}}}`)
 	if strings.Contains(body, `"isError":true`) {
-		t.Fatalf("scheduled issues_save should succeed: %s", body)
+		t.Fatalf("scheduled agents_save should succeed: %s", body)
 	}
-	got, ok := st.Issue("iss-sched")
-	if !ok || got.Title != "keep" || got.AutomationState != "ignored" {
-		t.Fatalf("native scheduled write did not persist: %+v", got)
+	agent, ok := st.Agent("sched-agent")
+	if !ok || agent.Name != "定时角色" {
+		t.Fatalf("native scheduled write did not persist: %+v", agent)
 	}
 	denied := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agentflow__issues_dispatch","arguments":{"path":{"id":"iss-sched"}}}}`)
 	if !strings.Contains(denied, "提示词执行结束后") && !strings.Contains(denied, "不在当前场景") && !strings.Contains(denied, "unknown") {

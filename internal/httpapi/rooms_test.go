@@ -28,6 +28,12 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.PutIssue(domain.Issue{
+		ID: "room-generic-issue", ProjectID: "platform", Title: "用通用模板跑", Status: "todo", WorkflowID: "room-generic", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-generic"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
@@ -36,7 +42,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	}, http.StatusCreated)
 
 	got := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
-		"title": "用通用模板跑", "workflowId": "room-generic",
+		"issueId": "room-generic-issue", "workflowId": "room-generic",
 	}, http.StatusCreated)
 	if got.Issue.WorkflowID != "room-generic" || got.Message.WorkflowID != "room-generic" {
 		t.Fatalf("generic template should be accepted as the dispatch target: %+v", got)
@@ -47,7 +53,7 @@ func TestRoomDispatchesGenericTemplate(t *testing.T) {
 	_ = e.Cancel(got.Message.RunID)
 }
 
-func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
+func TestRoomDispatchesSOPOnSyncedWorkItem(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
 	root := t.TempDir()
 	s, err := repo.OpenTest()
@@ -66,6 +72,18 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 		ID: "room-sop-2", Name: "群聊评审", Version: 1, ProjectID: "platform", Status: "published",
 		SandboxProfileID: "test-native",
 		Nodes:            []domain.WorkflowNode{{ID: "review", Name: "人工评审", Type: "approval", MaxAttempts: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutIssue(domain.Issue{
+		ID: "room-synced-issue", ProjectID: "platform", Title: "按 SOP 交付", Status: "todo", WorkflowID: "room-sop", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-synced"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutIssue(domain.Issue{
+		ID: "room-multi-issue", ProjectID: "platform", Title: "两条流程并行", Status: "todo", WorkflowID: "room-sop", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-multi"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +116,7 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	}, http.StatusBadRequest)
 
 	dispatched := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
-		"title": "按 SOP 交付", "description": "走群聊派单", "workflowId": "room-sop", "agentId": "developer",
+		"issueId": "room-synced-issue", "description": "走群聊派单", "workflowId": "room-sop", "agentId": "developer",
 	}, http.StatusCreated)
 	if dispatched.Task == nil || dispatched.Task.RunID == "" || dispatched.Task.IssueID != dispatched.Issue.ID {
 		t.Fatalf("sop dispatch: %+v", dispatched)
@@ -197,7 +215,7 @@ func TestRoomCreatesIssueAndDispatchesSOP(t *testing.T) {
 	}
 
 	multi := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
-		"title": "两条流程并行", "workflowIds": []string{"room-sop", "room-sop-2"},
+		"issueId": "room-multi-issue", "workflowIds": []string{"room-sop", "room-sop-2"},
 	}, http.StatusCreated)
 	if len(multi.Messages) != 2 || len(multi.Tasks) != 2 || multi.Messages[1].Lane != 1 || multi.Message.TargetType != "multi" {
 		t.Fatalf("multi-SOP dispatch: %+v", multi)

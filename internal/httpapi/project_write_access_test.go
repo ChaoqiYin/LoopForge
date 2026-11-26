@@ -60,15 +60,11 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issue := fmt.Sprintf(`{"id":"i1","projectId":"p1","title":"Fix login","assigneeUserId":%d}`, ownerUser.ID)
-	if code := call(other, "POST", "/api/issues", issue); code != 403 {
-		t.Fatalf("non-member create issue: %d", code)
+	if err := s.PutIssue(domain.Issue{ID: "i1", ProjectID: "p1", Title: "Fix login", Status: "todo", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-1"}}); err != nil {
+		t.Fatal(err)
 	}
-	if code := call(viewer, "POST", "/api/issues", issue); code != 403 {
-		t.Fatalf("viewer create issue: %d", code)
-	}
-	if code := call(member, "POST", "/api/issues", issue); code != 200 {
-		t.Fatalf("member create issue: %d", code)
+	if code := call(other, "POST", "/api/issues", `{"projectId":"p1","title":"Fix login"}`); code != http.StatusMethodNotAllowed {
+		t.Fatalf("local issue creation should be closed: %d", code)
 	}
 	t.Run("clarification catalog uses the responsible account", func(t *testing.T) {
 		const path = "/api/issues/i1/clarify-models"
@@ -94,8 +90,8 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 			t.Fatalf("want the project owner's model: %+v", catalog.Models)
 		}
 	})
-	if code := call(other, "PUT", "/api/issues", `{"id":"i1","projectId":"p1","title":"Hijacked"}`); code != 403 {
-		t.Fatalf("non-member edit issue: %d", code)
+	if code := call(other, "PUT", "/api/issues/i1/sops", `{"bindings":[]}`); code != 403 {
+		t.Fatalf("non-member edit issue SOPs: %d", code)
 	}
 	if code := call(other, "POST", "/api/issues/i1/close", `{}`); code != 403 {
 		t.Fatalf("non-member close issue: %d", code)
@@ -103,7 +99,10 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	if saved, _ := s.Issue("i1"); saved.Title != "Fix login" || saved.Status == "closed" {
 		t.Fatalf("issue changed by a non-member: %+v", saved)
 	}
-	if code := call(other, "POST", "/api/issues", `{"projectId":"shared","title":"Shared idea"}`); code != 200 {
+	if err := s.PutIssue(domain.Issue{ID: "shared-issue", ProjectID: "shared", Title: "Shared idea", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(other, "POST", "/api/issues/shared-issue/comments", `{"body":"shared"}`); code != 200 {
 		t.Fatalf("ownerless projects stay shared: %d", code)
 	}
 	if err := s.PutProject(domain.Project{ID: "ownerless-team", Name: "Ownerless team", Members: []domain.ProjectMember{
@@ -111,10 +110,13 @@ func TestProjectContentWritesRequireMembership(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := call(other, "POST", "/api/issues", `{"projectId":"ownerless-team","title":"Outsider idea"}`); code != 403 {
+	if err := s.PutIssue(domain.Issue{ID: "team-issue", ProjectID: "ownerless-team", Title: "Team idea", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-3"}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(other, "POST", "/api/issues/team-issue/comments", `{"body":"outsider"}`); code != 403 {
 		t.Fatalf("ownerless projects with members are limited to members: %d", code)
 	}
-	if code := call(member, "POST", "/api/issues", `{"projectId":"ownerless-team","title":"Member idea"}`); code != 200 {
+	if code := call(member, "POST", "/api/issues/team-issue/comments", `{"body":"member"}`); code != 200 {
 		t.Fatalf("member writes to ownerless team project: %d", code)
 	}
 

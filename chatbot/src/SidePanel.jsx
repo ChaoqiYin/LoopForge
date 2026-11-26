@@ -464,15 +464,9 @@ export default function SidePanel({
           );
         setWorkflowId(id);
       } else {
-        const issue = await write("/api/issues", {
-          projectId,
-          workflowId,
-          title: name.trim(),
-          description: detail,
-        });
-        await write(`/api/issues/${encodeURIComponent(issue.id)}/dispatch`, {
-          workflowId,
-        });
+        throw Error(
+          "本地建单已关闭：请在外部管理工作台创建 Work Item，再在平台选择它运行 SOP。",
+        );
       }
       setName("");
       setDetail("");

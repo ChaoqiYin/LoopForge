@@ -109,7 +109,7 @@ func submitClarificationSchema() map[string]any {
 // answers them: full access starts a SOP without asking.
 func submitAssistantReplySchema(exec assistantExecMode) map[string]any {
 	names := assistantWriteToolNameList()
-	toolSchema := map[string]any{"type": "string", "description": "必填：本草稿要执行的写入工具名称，如 issues_save、issues_dispatch；不要省略，不带 mcp__ 前缀"}
+	toolSchema := map[string]any{"type": "string", "description": "必填：本草稿要执行的写入工具名称，如 issues_dispatch、runs_start；不要省略，不带 mcp__ 前缀"}
 	if len(names) > 0 {
 		enum := make([]any, 0, len(names)+1)
 		for _, name := range names {

@@ -60,6 +60,16 @@ func (e *Engine) StartWithRepositoriesContext(workflowID, input string, reposito
 // StartWithRepositories allows cancellation while resolving an automatic
 // sandbox. Once admitted, the run continues independently of the caller.
 func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
+	return e.startWithRepositoriesOrigin(ctx, workflowID, input, repositories, executionContext, "")
+}
+
+// StartTemporaryWithRepositories starts an exploration Run that belongs to no
+// Work Item. Temporary runs are excluded from formal statistics and delivery.
+func (e *Engine) StartTemporaryWithRepositories(ctx context.Context, workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext) (domain.Run, error) {
+	return e.startWithRepositoriesOrigin(ctx, workflowID, input, repositories, executionContext, domain.RunOriginAssistantScratch)
+}
+
+func (e *Engine) startWithRepositoriesOrigin(ctx context.Context, workflowID, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, origin string) (domain.Run, error) {
 	wf, ok := e.repo.Workflow(workflowID)
 	if !ok {
 		return domain.Run{}, fmt.Errorf("workflow not found")
@@ -88,12 +98,12 @@ func (e *Engine) StartWithRepositories(ctx context.Context, workflowID, input st
 			return domain.Run{}, fmt.Errorf("SOP 不在共享任务的引用范围内")
 		}
 	}
-	return e.startWorkflowDefinition(ctx, wf, input, repositories, executionContext, false)
+	return e.startWorkflowDefinition(ctx, wf, input, repositories, executionContext, false, origin)
 }
 
 // startWorkflowDefinition also accepts a run-only conversation workspace definition.
 // It never writes a template to the catalog.
-func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool) (domain.Run, error) {
+func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.WorkflowDefinition, input string, repositories []domain.RepositoryContext, executionContext domain.TelemetryContext, workspace bool, origin string) (domain.Run, error) {
 	workflowID := wf.ID
 	repositories = normalizeRepositories(repositories)
 	if executionContext.ParentRunID == "" || !executionContext.ExecutionPinned || executionContext.WorkspaceRunID == "" {
@@ -251,9 +261,15 @@ func (e *Engine) startWorkflowDefinition(ctx context.Context, wf domain.Workflow
 		firstRepository = repositories[0]
 	}
 	executionContext.RunID, executionContext.TraceID, executionContext.WorkflowID, executionContext.WorkflowVersion = id, id, workflowID, wf.Version
+	runOrigin := origin
+	if runOrigin == "" && executionContext.ParentRunID != "" && parent.IsTemporary() {
+		// A child of an exploration run stays temporary even when its start
+		// request came from a generic SOP node.
+		runOrigin = parent.Origin
+	}
 	wf.SandboxSnapshot = sandbox
 	r := domain.Run{
-		ID: id, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
+		ID: id, Origin: runOrigin, WorkflowID: workflowID, WorkflowSnapshot: wf, Status: "running", Input: input,
 		Repository: firstRepository, ExecutionContext: executionContext, Nodes: map[string]*domain.NodeRun{},
 		CreatedAt: now, UpdatedAt: now,
 	}

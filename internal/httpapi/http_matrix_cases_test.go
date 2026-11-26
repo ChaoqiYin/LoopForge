@@ -136,7 +136,7 @@ func TestCatalogIssueRunAndSpaceValidationHTTP(t *testing.T) {
 		{http.MethodPut, "/api/workflows", map[string]any{}, 200},
 		{http.MethodGet, "/api/workflows/missing", nil, 404},
 		{http.MethodGet, "/api/issues?limit=bad&offset=-1", nil, 400},
-		{http.MethodPost, "/api/issues", map[string]any{}, 400},
+		{http.MethodPost, "/api/issues", map[string]any{}, 405},
 		{http.MethodGet, "/api/issues/missing", nil, 404},
 		{http.MethodPost, "/api/issues/missing/comments", map[string]any{}, 404},
 		{http.MethodGet, "/api/runs", nil, 200},

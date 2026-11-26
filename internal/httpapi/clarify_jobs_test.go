@@ -42,7 +42,7 @@ func TestIssueClarifyContinuesAfterClientDisconnect(t *testing.T) {
 	t.Cleanup(func() { setClarifyExecForTest(nil) })
 
 	s, h := clarifyTestServer(t)
-	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-bg", ProjectID: "platform", Title: "需要澄清", Description: "短", Kind: "requirement", Status: "backlog", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser}}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-bg", ProjectID: "platform", Title: "需要澄清", Description: "短", Kind: "requirement", Status: "backlog", Clarification: domain.ClarificationAssessment{Status: domain.ClarificationNeedsUser}, ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"message": domain.ClarificationKickoff})
@@ -108,7 +108,7 @@ func TestIssueClarifySSEReplayAfterAttach(t *testing.T) {
 	})
 
 	s, h := clarifyTestServer(t)
-	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-sse", ProjectID: "platform", Title: "SSE", Kind: "requirement", Status: "backlog"}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-sse", ProjectID: "platform", Title: "SSE", Kind: "requirement", Status: "backlog", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	startBody, _ := json.Marshal(map[string]any{"message": domain.ClarificationKickoff})
@@ -159,7 +159,7 @@ func TestIssueClarifySanitizesJSONDumpOptions(t *testing.T) {
 	t.Cleanup(func() { setClarifyExecForTest(nil) })
 
 	s, h := clarifyTestServer(t)
-	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-json-opt", ProjectID: "platform", Title: "DescribeDomainLastPackageInfo 返回错误", Kind: "requirement", Status: "backlog"}); err != nil {
+	if err := s.PutIssue(domain.Issue{ID: "iss-clarify-json-opt", ProjectID: "platform", Title: "DescribeDomainLastPackageInfo 返回错误", Kind: "requirement", Status: "backlog", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"message": domain.ClarificationKickoff})
@@ -263,12 +263,12 @@ func TestPersistClarifyReadyPromotesBacklogToTodo(t *testing.T) {
 	t.Cleanup(s.Close)
 	if err := s.PutIssue(domain.Issue{
 		ID: "iss-clarify-todo", ProjectID: "platform", Title: "待澄清需求", Kind: "requirement", Status: "backlog",
-	}); err != nil {
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutIssue(domain.Issue{
 		ID: "iss-clarify-blocked", ProjectID: "platform", Title: "失败重澄清", Kind: "requirement", Status: "blocked",
-	}); err != nil {
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := &streamHandlers{deps: &deps{repo: s, sync: tracker.NewService()}}
@@ -381,7 +381,7 @@ func TestPersistClarifyRejectsRawDump(t *testing.T) {
 	t.Cleanup(s.Close)
 	if err := s.PutIssue(domain.Issue{
 		ID: "iss-dump", ProjectID: "platform", Title: "dump", Kind: "requirement",
-	}); err != nil {
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := &streamHandlers{deps: &deps{repo: s}}
@@ -406,7 +406,7 @@ func TestPersistClarifyKeepsSessionID(t *testing.T) {
 	if err := s.PutIssue(domain.Issue{
 		ID: "iss-session", ProjectID: "platform", Title: "session", Kind: "requirement",
 		Clarification: domain.ClarificationAssessment{SessionID: "af-clarify-1", SessionUserID: 1},
-	}); err != nil {
+		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "test-formal"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := &streamHandlers{deps: &deps{repo: s}}

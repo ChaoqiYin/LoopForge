@@ -33,60 +33,6 @@ func putIssueBranchRepositories(t *testing.T, st *repo.Store) []string {
 	return ids
 }
 
-func TestIssueRepositoryBranchesCreateEditAndReset(t *testing.T) {
-	st, err := repo.OpenTest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	ids := putIssueBranchRepositories(t, st)
-	h := New(st, engine.New(st, runtime.NewManager(t.TempDir())), tracker.NewService(), "", "")
-	branches := map[string]string{ids[0]: "feature/api", ids[1]: "feature/web"}
-	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "前后端联合开发", "repositoryIds": ids[:2],
-		"repositoryBranches": map[string]string{ids[0]: " feature/api ", ids[1]: "feature/web"},
-	}, http.StatusOK)
-	if !maps.Equal(created.RepositoryBranches, branches) || created.BaseBranch != "" {
-		t.Fatalf("per-repository branches were not normalized and persisted: %+v", created)
-	}
-	if _, err := st.PatchIssue(created.ID, func(issue *domain.Issue) error {
-		issue.Clarification.SessionID = "multi-repo-session"
-		issue.Clarification.SessionUserID = 1
-		issue.Clarification.Summary = "保留业务回答"
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	edited := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "title": "补充需求标题",
-	}, http.StatusOK)
-	if !maps.Equal(edited.RepositoryBranches, branches) || edited.Clarification.SessionID != "multi-repo-session" {
-		t.Fatalf("partial edits must preserve branches and their code session: %+v", edited)
-	}
-	branches[ids[1]] = "feature/web-v2"
-	changed := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "repositoryBranches": branches,
-	}, http.StatusOK)
-	if !maps.Equal(changed.RepositoryBranches, branches) || changed.Clarification.SessionID != "" || changed.Clarification.SessionUserID != 0 || changed.Clarification.Summary != "保留业务回答" {
-		t.Fatalf("secondary branch changes must reset code context and retain business answers: %+v", changed)
-	}
-	if len(changed.Operations) == 0 || !strings.Contains(changed.Operations[len(changed.Operations)-1].Detail, "各仓库继续开发分支") {
-		t.Fatalf("branch changes were not audited: %+v", changed.Operations)
-	}
-	reduced := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "repositoryIds": ids[:1], "repositoryId": ids[0],
-	}, http.StatusOK)
-	if len(reduced.RepositoryBranches) != 1 || reduced.BaseBranch != branches[ids[0]] {
-		t.Fatalf("removing a repository must drop its branch and preserve single-repo compatibility: %+v", reduced)
-	}
-	reset := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "repositoryBranches": map[string]string{},
-	}, http.StatusOK)
-	if len(reset.RepositoryBranches) != 0 || reset.BaseBranch != "" {
-		t.Fatalf("explicit empty mapping must restore automatic branches: %+v", reset)
-	}
-}
-
 func TestImportTAPDRepositoryBranchesAndReimport(t *testing.T) {
 	st, err := repo.OpenTest()
 	if err != nil {

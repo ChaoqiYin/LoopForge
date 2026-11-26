@@ -130,35 +130,27 @@ assert.equal(elements["#chatInput"].value, "继续开发已有分支");
   input.value = "feature/continue";
   elements["#chatInput"].value = "个人主页增加徽章\n兼容现有成就体系";
   ctx.state.reqTarget = "local";
+  const beforeCreate = requests.length;
   await ctx.createIssueFromChat();
-  const created = requests.at(-1);
-  assert.equal(created.url, "/api/issues");
-  assert.equal(created.body.title, "个人主页增加徽章", "the title comes from the first line of the description");
-  assert.equal(created.body.description, "个人主页增加徽章\n兼容现有成就体系");
-  assert.equal(created.body.baseBranch, "feature/continue");
-  assert.equal(created.body.clarification, undefined, "creating no longer carries a clarification");
-  assert.deepEqual(opened.at(-1), ["created", ""], "plain creation opens the issue detail without dispatching");
+  assert.equal(requests.length, beforeCreate, "local issue creation must be closed");
+  assert.match(notices.at(-1), /本地建单已关闭/);
   assert.equal(chats.length, 0);
 
-  const before = requests.length;
   elements["#chatInput"].value = "要和 AI 聊清楚的需求";
   await ctx.createIssueFromChat(undefined, "chat");
-  assert.equal(requests.length, before + 1, "creating for the chat only creates the issue, it does not dispatch");
-  assert.equal(requests.at(-1).url, "/api/issues");
-  assert.deepEqual(chats, ["created"], "creating for the chat opens the issue in the chat");
-  assert.equal(opened.length, 1, "creating for the chat does not open the issue detail");
+  assert.equal(requests.length, beforeCreate, "chat creation must be closed too");
+  assert.match(notices.at(-1), /本地建单已关闭/);
   assert.equal(ctx.state.reqCreating, "");
 
   elements["#chatInput"].value = "   ";
-  const blank = requests.length;
   await ctx.createIssueFromChat(undefined, "chat");
-  assert.equal(requests.length, blank, "a blank description creates nothing");
-  assert.equal(notices.at(-1), "先写一句需求");
+  assert.equal(requests.length, beforeCreate, "a blank description creates nothing");
+  assert.match(notices.at(-1), /本地建单已关闭/);
 
   input.value = "";
   elements["#chatInput"].value = "空分支";
   await ctx.createIssueFromChat("local");
-  assert.equal(requests.at(-1).body.baseBranch, "", "blank branch preserves server-side repository defaults");
+  assert.equal(requests.length, beforeCreate, "closed creation preserves the composer draft");
 
   const share = "【关闭套餐后清理付费队列】\nhttps://tapd.example.com/tapd_fe/10000000/task/detail/1010000000100001554";
   elements["#importTAPDURL"].value = share;
