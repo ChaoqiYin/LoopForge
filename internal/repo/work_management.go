@@ -372,6 +372,40 @@ func (r *WorkManagementRepo) WorkManagementEventsByStatus(status domain.Manageme
 	return out, nil
 }
 
+// WorkManagementEventsDue lists pending and failed inbox rows whose retry time
+// has arrived. Events are processed in receive order; the caller serializes
+// per record because it drains this queue in a single worker.
+func (r *WorkManagementRepo) WorkManagementEventsDue(now time.Time, limit int) ([]domain.WorkManagementEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows []workManagementEventRow
+	err := r.DB.Where("status IN ?", []string{string(domain.ManagementEventPending), string(domain.ManagementEventFailed)}).
+		Where("(next_attempt_at IS NULL OR next_attempt_at <= ?)", now.UTC()).
+		Order("received_at, id").Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.WorkManagementEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.toDomain())
+	}
+	return out, nil
+}
+
+// ResetWorkManagementEventsProcessing returns rows stranded in "processing"
+// (a crash mid-event) to the queue. Events younger than cutoff are left alone
+// so another live worker is not disturbed.
+func (r *WorkManagementRepo) ResetWorkManagementEventsProcessing(cutoff time.Time) error {
+	return r.DB.Model(&workManagementEventRow{}).
+		Where("status = ? AND updated_at < ?", string(domain.ManagementEventProcessing), cutoff.UTC()).
+		Updates(map[string]any{
+			"status":          string(domain.ManagementEventPending),
+			"next_attempt_at": nil,
+			"updated_at":      timePtr(time.Now().UTC()),
+		}).Error
+}
+
 // UpdateWorkManagementEvent writes back processing state. It never inserts.
 func (r *WorkManagementRepo) UpdateWorkManagementEvent(event domain.WorkManagementEvent) error {
 	if strings.TrimSpace(event.ID) == "" {

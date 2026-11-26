@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
@@ -14,11 +16,12 @@ import (
 )
 
 // workManagementHandlers owns Management Connection configuration: CRUD,
-// self-check, field/status mappings and the manual-sync entry point. Sync
-// orchestration, event intake and reconciliation are wired by later tickets.
+// self-check, field/status mappings and the manual-sync entry point. Event
+// intake, projection and reconciliation live in the Work Management service.
 type workManagementHandlers struct {
 	*deps
 	adapter *workmanagement.FeishuAdapter
+	service *workmanagement.Service
 }
 
 // newFeishuWorkManagementAdapter binds the Feishu adapter to the existing
@@ -26,6 +29,7 @@ type workManagementHandlers struct {
 // credential system: the secret is opened by repo.BotCredential.
 func newFeishuWorkManagementAdapter(s *repo.Store) *workmanagement.FeishuAdapter {
 	return workmanagement.NewFeishuAdapter(workmanagement.AdapterOptions{
+		BaseURL:  strings.TrimSpace(os.Getenv("AGENTFLOW_FEISHU_BASE_URL")),
 		Mappings: s,
 		Credentials: func(_ context.Context, botConfigID string) (string, string, error) {
 			bot, err := s.NotificationBot(botConfigID)
@@ -252,9 +256,22 @@ func (h *workManagementHandlers) syncNow(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if h.service == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"ok": true, "accepted": true, "readiness": readiness,
+			"message": "连接校验通过；同步服务未启用",
+		})
+		return
+	}
+	stored, _ := h.repo.ManagementConnection(conn.ID)
+	summary, err := h.service.SyncNow(c.Request.Context(), stored)
+	if err != nil {
+		c.JSON(workManagementErrorStatus(err), gin.H{"error": workmanagement.UserMessage(err), "readiness": readiness, "sync": summary})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"ok": true, "accepted": true, "readiness": readiness,
-		"message": "连接校验通过；同步编排将在后续版本接入",
+		"ok": true, "accepted": true, "readiness": readiness, "sync": summary,
+		"message": "同步完成",
 	})
 }
 
@@ -264,6 +281,20 @@ func (h *workManagementHandlers) checkConnection(c *gin.Context, conn domain.Man
 	if err == nil && len(resolved) > 0 {
 		if saveErr := h.repo.PutManagementFieldMappings(resolved); saveErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存字段 ID 缓存失败"})
+			return readiness, nil, false
+		}
+	}
+	if err == nil && h.service != nil {
+		// Feishu events are subscribed per file. A failure means the
+		// application is not an administrator of the Bitable, which must be
+		// visible as not-ready instead of silently missing events.
+		if subErr := h.service.EnsureSubscription(c.Request.Context(), conn); subErr != nil {
+			readiness = domain.ManagementConnectionReadiness{
+				State: domain.ManagementReadinessNotReady, Message: workmanagement.UserMessage(subErr), CheckedAt: time.Now().UTC(),
+			}
+			conn.Readiness = readiness
+			_ = h.repo.PutManagementConnection(conn)
+			c.JSON(workManagementErrorStatus(subErr), gin.H{"error": workmanagement.UserMessage(subErr), "readiness": readiness})
 			return readiness, nil, false
 		}
 	}

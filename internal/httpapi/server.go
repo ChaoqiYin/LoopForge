@@ -31,6 +31,7 @@ import (
 	"agentflow/internal/runtime"
 	"agentflow/internal/schedule"
 	"agentflow/internal/tracker"
+	"agentflow/internal/workmanagement"
 	webassets "agentflow/web"
 
 	"github.com/gin-gonic/gin"
@@ -126,11 +127,14 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
 		h.startAttachmentSweeper(ctx)
+	}, func(server *Server) {
+		// Event intake and reconciliation share the API process lifetime.
+		server.workManagement.service.Start(ctx)
 	})
 	return router, bg
 }
 
-func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
+func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers), onReady ...func(*Server)) *gin.Engine {
 	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
@@ -157,6 +161,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
 	}
+	wmAdapter := newFeishuWorkManagementAdapter(s)
+	wmService := workmanagement.NewService(wmAdapter, s, workmanagement.ServiceOptions{})
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
@@ -188,7 +194,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
-		workManagement:  &workManagementHandlers{deps: d, adapter: newFeishuWorkManagementAdapter(s)},
+		workManagement:  &workManagementHandlers{deps: d, adapter: wmAdapter, service: wmService},
+	}
+	// Bitable record change events arrive on the same Feishu long connection
+	// the notification Bot already uses; the handler only writes the inbox.
+	if notifications != nil && notifications.Interactions != nil {
+		notifications.Interactions.SetFeishuEventRegistrar(wmService.RegisterFeishuEvents)
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -746,6 +757,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 	if startBackground != nil {
 		startBackground(asst, api.runs)
+	}
+	for _, ready := range onReady {
+		ready(api)
 	}
 	return g
 }

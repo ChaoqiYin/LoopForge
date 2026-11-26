@@ -20,6 +20,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkbitable "github.com/larksuite/oapi-sdk-go/v3/service/bitable/v1"
+	larkdrive "github.com/larksuite/oapi-sdk-go/v3/service/drive/v1"
 )
 
 // Feishu Bitable is the first Management Adapter. It translates tenant-token
@@ -331,7 +332,7 @@ func (a *FeishuAdapter) GetWorkItem(ctx context.Context, conn domain.ManagementC
 		if len(records) == 0 {
 			return domain.ExternalRecord{}, adapterError(ErrRecordNotFound, "外部记录不存在或不可访问：%s", recordID)
 		}
-		return a.normalizeRecord(conn, mappings, records[0])
+		return a.normalizeRecord(conn, mappings, records[0], true)
 	}
 	businessKey := strings.TrimSpace(ref.BusinessKey)
 	if businessKey == "" {
@@ -356,13 +357,47 @@ func (a *FeishuAdapter) GetWorkItem(ctx context.Context, conn domain.ManagementC
 	if resp == nil || resp.Data == nil || len(resp.Data.Items) == 0 {
 		return domain.ExternalRecord{}, adapterError(ErrRecordNotFound, "未找到业务编号为 %s 的记录", businessKey)
 	}
-	return a.normalizeRecord(conn, mappings, resp.Data.Items[0])
+	return a.normalizeRecord(conn, mappings, resp.Data.Items[0], true)
+}
+
+// ReadRecordForProjection reads one record for the Work Item projection.
+// Unlike GetWorkItem it tolerates a missing business key or title: the
+// projection degrades to the record id and raises an alert instead of
+// rejecting the record outright.
+func (a *FeishuAdapter) ReadRecordForProjection(ctx context.Context, conn domain.ManagementConnection, recordID string) (domain.ExternalRecord, error) {
+	recordID = strings.TrimSpace(recordID)
+	if recordID == "" {
+		return domain.ExternalRecord{}, adapterError(ErrRecordNotFound, "记录 ID 不能为空")
+	}
+	mappings, err := a.fieldMappings(conn)
+	if err != nil {
+		return domain.ExternalRecord{}, err
+	}
+	records, err := a.batchGet(ctx, conn, []string{recordID})
+	if err != nil {
+		return domain.ExternalRecord{}, err
+	}
+	if len(records) == 0 {
+		return domain.ExternalRecord{}, adapterError(ErrRecordNotFound, "外部记录不存在或不可访问：%s", recordID)
+	}
+	return a.normalizeRecord(conn, mappings, records[0], false)
 }
 
 // ListWorkItems reads one page of external records. The cursor is the
 // platform page token; reconciliation truncates by ModifiedAt locally because
 // date filters only reach whole days.
 func (a *FeishuAdapter) ListWorkItems(ctx context.Context, conn domain.ManagementConnection, cursor string, limit int) (domain.ExternalRecordPage, error) {
+	return a.listWorkItems(ctx, conn, cursor, limit, true)
+}
+
+// ListWorkItemsForProjection lists records leniently so one record without a
+// business key cannot abort reconciliation; the projection degrades that
+// record to its record id and alerts.
+func (a *FeishuAdapter) ListWorkItemsForProjection(ctx context.Context, conn domain.ManagementConnection, cursor string, limit int) (domain.ExternalRecordPage, error) {
+	return a.listWorkItems(ctx, conn, cursor, limit, false)
+}
+
+func (a *FeishuAdapter) listWorkItems(ctx context.Context, conn domain.ManagementConnection, cursor string, limit int, requireBusinessKey bool) (domain.ExternalRecordPage, error) {
 	mappings, err := a.fieldMappings(conn)
 	if err != nil {
 		return domain.ExternalRecordPage{}, err
@@ -385,7 +420,7 @@ func (a *FeishuAdapter) ListWorkItems(ctx context.Context, conn domain.Managemen
 		page.Cursor = *resp.Data.PageToken
 	}
 	for _, item := range resp.Data.Items {
-		record, err := a.normalizeRecord(conn, mappings, item)
+		record, err := a.normalizeRecord(conn, mappings, item, requireBusinessKey)
 		if err != nil {
 			return domain.ExternalRecordPage{}, err
 		}
@@ -480,7 +515,7 @@ func (a *FeishuAdapter) search(ctx context.Context, conn domain.ManagementConnec
 	return resp, nil
 }
 
-func (a *FeishuAdapter) normalizeRecord(conn domain.ManagementConnection, mappings []domain.ManagementFieldMapping, item *larkbitable.AppTableRecord) (domain.ExternalRecord, error) {
+func (a *FeishuAdapter) normalizeRecord(conn domain.ManagementConnection, mappings []domain.ManagementFieldMapping, item *larkbitable.AppTableRecord, requireBusinessKey bool) (domain.ExternalRecord, error) {
 	if item == nil {
 		return domain.ExternalRecord{}, adapterError(ErrRecordNotFound, "外部记录不存在")
 	}
@@ -496,12 +531,20 @@ func (a *FeishuAdapter) normalizeRecord(conn domain.ManagementConnection, mappin
 	businessKey, found := value(domain.WorkItemFieldBusinessKey)
 	if !found || strings.TrimSpace(businessKey) == "" {
 		name := strings.TrimSpace(fieldName(mappings, domain.WorkItemFieldBusinessKey))
-		return domain.ExternalRecord{}, adapterError(ErrBusinessKeyMissing, "记录缺少业务编号字段：%s", name)
+		if requireBusinessKey {
+			return domain.ExternalRecord{}, adapterError(ErrBusinessKeyMissing, "记录缺少业务编号字段：%s", name)
+		}
+		// Projection may degrade to the record id and raise an alert; the
+		// adapter still refuses to guess for identity-sensitive reads.
+		businessKey = recordID
 	}
 	title, found := value(domain.WorkItemFieldTitle)
 	if !found || strings.TrimSpace(title) == "" {
 		name := strings.TrimSpace(fieldName(mappings, domain.WorkItemFieldTitle))
-		return domain.ExternalRecord{}, adapterError(ErrFieldMissing, "记录缺少标题字段：%s", name)
+		if requireBusinessKey {
+			return domain.ExternalRecord{}, adapterError(ErrFieldMissing, "记录缺少标题字段：%s", name)
+		}
+		title = recordID
 	}
 	status, _ := value(domain.WorkItemFieldStatus)
 	description, _ := value(domain.WorkItemFieldDescription)
@@ -509,6 +552,7 @@ func (a *FeishuAdapter) normalizeRecord(conn domain.ManagementConnection, mappin
 	assignee, _ := value(domain.WorkItemFieldAssignee)
 	acceptance, _ := value(domain.WorkItemFieldAcceptanceCriteria)
 	repository, _ := value(domain.WorkItemFieldRepository)
+	projectID, _ := value(domain.WorkItemFieldProject)
 	externalURL := ""
 	if mapping, ok := mappingFor(mappings, domain.WorkItemFieldExternalURL); ok {
 		if raw, found := lookupRaw(fields, mapping); found {
@@ -542,6 +586,7 @@ func (a *FeishuAdapter) normalizeRecord(conn domain.ManagementConnection, mappin
 		Assignee:           assignee,
 		AcceptanceCriteria: acceptance,
 		Repository:         repository,
+		ProjectID:          strings.TrimSpace(projectID),
 		ExternalStatus:     strings.TrimSpace(status),
 		ExternalURL:        externalURL,
 		ModifiedAt:         modified,
@@ -636,10 +681,34 @@ func (a *FeishuAdapter) UpdateDeliverySummary(ctx context.Context, conn domain.M
 	return a.batchUpdateFields(ctx, conn, recordID, fields)
 }
 
-// SubscribeEvents is intentionally not part of this ticket's scope (event
-// long connection and reconciliation follow in later tickets).
-func (a *FeishuAdapter) SubscribeEvents(context.Context, domain.ManagementConnection) error {
-	return adapterError(ErrSubscribeUnsupported, "事件订阅由后续版本接入")
+// SubscribeEvents subscribes the connection's Bitable file to record and field
+// change events. Feishu requires the application to be the document owner or
+// an administrator; a permission failure is surfaced so the connection can be
+// marked not-ready instead of silently missing events.
+func (a *FeishuAdapter) SubscribeEvents(ctx context.Context, conn domain.ManagementConnection) error {
+	if strings.TrimSpace(conn.BaseAppToken) == "" {
+		return adapterError(ErrSubscribeUnsupported, "连接缺少 base app_token，无法订阅事件")
+	}
+	var resp *larkdrive.SubscribeFileResp
+	err := a.call(ctx, conn, func(token string, creds feishuCredentials) (int, http.Header, int, string, error) {
+		req := larkdrive.NewSubscribeFileReqBuilder().
+			FileToken(conn.BaseAppToken).
+			FileType(larkdrive.FileTypeSubscribeFileBitable).
+			Build()
+		r, err := a.client(creds).Drive.V1.File.Subscribe(ctx, req, larkcore.WithTenantAccessToken(token))
+		if err != nil {
+			return 0, nil, 0, "", err
+		}
+		resp = r
+		return r.StatusCode, r.Header, r.Code, r.Msg, nil
+	})
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return nil
+	}
+	return nil
 }
 
 func (a *FeishuAdapter) recordID(ctx context.Context, conn domain.ManagementConnection, ref domain.ExternalRef) (string, error) {

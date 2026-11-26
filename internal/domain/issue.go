@@ -47,11 +47,17 @@ type Issue struct {
 	DeliveryMRState    string            `json:"deliveryMrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, unknown
 	// DeliveryMRs lists one MR per delivered repository. DeliveryMRURL is its
 	// first entry and DeliveryMRState the aggregate (see SetDeliveryMRs).
-	DeliveryMRs       []DeliveryMR            `json:"deliveryMrs,omitempty"`
-	DeliveryUpdatedAt time.Time               `json:"deliveryUpdatedAt,omitempty"`
-	Kind              string                  `json:"kind,omitempty"` // requirement, issue
-	Clarification     ClarificationAssessment `json:"clarification"`
-	Source            string                  `json:"source,omitempty"` // local, gongfeng, tapd
+	DeliveryMRs       []DeliveryMR `json:"deliveryMrs,omitempty"`
+	DeliveryUpdatedAt time.Time    `json:"deliveryUpdatedAt,omitempty"`
+	Kind              string       `json:"kind,omitempty"` // requirement, issue
+	// AcceptanceCriteria is the externally managed acceptance snapshot used
+	// as Agent input. It is not a local editable requirement field.
+	AcceptanceCriteria string `json:"acceptanceCriteria,omitempty"`
+	// ExternalAssignee is the display-only assignee reported by the external
+	// record. It is never mapped to a LoopForge user.
+	ExternalAssignee string                  `json:"externalAssignee,omitempty"`
+	Clarification    ClarificationAssessment `json:"clarification"`
+	Source           string                  `json:"source,omitempty"` // local, gongfeng, tapd
 	// TapdID is an optional metrics-only link for a platform-created requirement.
 	// It does not create a tracker binding or authorize TAPD write-back.
 	TapdID      string       `json:"tapdId,omitempty"`
