@@ -11,7 +11,8 @@ The platform keeps the upstream Go module name `agentflow`, package boundaries a
 | `internal/repo` | MySQL persistence, one repository per business domain |
 | `internal/httpapi` | HTTP/MCP handlers, one handler per business domain |
 | `internal/runtime`, `internal/runner` | Executor protocols, credentials, isolation and artifacts |
-| `internal/tracker` | Remote issue/PR adapters |
+| `internal/tracker` | Legacy remote issue/PR adapters, kept for compatible sync |
+| `internal/workmanagement` | Management Adapter boundary, Feishu Bitable, Event Inbox, reconciliation and Work Item projection |
 | `web` | Embedded upstream web interface, preferences and public sign-in |
 | `migrations` | Explicit data migrations and optional public catalog |
 | `local` | Local workflows and host integrations; user guides live in `docs/local/` |

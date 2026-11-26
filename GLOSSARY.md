@@ -20,6 +20,14 @@ _Avoid_: ticket, task
 The authoritative record in a management platform that a Work Item projects.
 _Avoid_: source issue, remote ticket
 
+**Business Key**:
+The stable identifier a table stores for one External Record. A Work Item's identity is `(connection, table, business_key)`, so a copied or recreated record still resolves to the same Work Item.
+_Avoid_: record id, external id (the platform row reference is not stable across copies)
+
+**Event Inbox**:
+The durable intake table for platform events. Each event is persisted under its unique `event_id` before the platform is acknowledged, then processed asynchronously, in order per record, and idempotently.
+_Avoid_: webhook queue, event log
+
 **External Business Status**:
 The status value maintained by the external platform. LoopForge reads it and never treats it as its own execution state.
 _Avoid_: status, issue status
@@ -29,8 +37,12 @@ The status derived from LoopForge's dispatch, task, and run state. It is never w
 _Avoid_: run status, task status
 
 **Management Connection**:
-A configured link to one external management platform instance, including its field mapping, status mapping, and default Project.
+A configured link to one external management platform instance: its encrypted application-credential reference, base and table, field mapping, status mapping, default Project, writeback switch and sync cursor.
 _Avoid_: integration, tracker
+
+**Reconciliation**:
+A re-read of External Records used as the fallback for events: incremental every 15 minutes, full daily, and on demand. It recovers lost events and deletions, and refreshes values that do not raise events.
+_Avoid_: sync, polling
 
 **Management Adapter**:
 The boundary that translates between one management platform's records and Work Items.
@@ -59,6 +71,10 @@ _Avoid_: approval, business approval
 **Formal Work Item**:
 A Work Item bound to an External Record. Only Formal Work Items enter delivery statistics and the default execution view.
 _Avoid_: official task, real issue
+
+**Orphaned Work Item**:
+A Work Item whose External Record was deleted in the management platform. It stops automatic triggering but keeps its Run and Trace evidence.
+_Avoid_: deleted issue, zombie work item
 
 **Temporary Run**:
 A run started for exploration or assistance without a Work Item. It is excluded from formal execution statistics.
