@@ -162,7 +162,10 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
 	}
 	wmAdapter := newFeishuWorkManagementAdapter(s)
-	wmService := workmanagement.NewService(wmAdapter, s, workmanagement.ServiceOptions{})
+	// External status entries reuse the existing Issue dispatch chain; the
+	// execution adapter only maps them onto Task/Run control.
+	wmExecution := &workManagementExecution{deps: d}
+	wmService := workmanagement.NewService(wmAdapter, s, workmanagement.ServiceOptions{Execution: wmExecution})
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},

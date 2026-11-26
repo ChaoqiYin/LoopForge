@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -37,10 +39,19 @@ type fakeBitableFeishu struct {
 	searchCalls    int
 	// batchGetGate, when non-nil, blocks record reads until it is closed.
 	batchGetGate chan struct{}
+	requests     []fakeBitableRequest
 
 	conns  chan *websocket.Conn
 	acks   chan int
 	closed chan struct{}
+}
+
+// fakeBitableRequest is one recorded OpenAPI call; the writeback test asserts
+// the outgoing fields without reaching into the adapter.
+type fakeBitableRequest struct {
+	Method string
+	Path   string
+	Body   map[string]any
 }
 
 func newFakeBitableFeishu(t *testing.T) *fakeBitableFeishu {
@@ -98,12 +109,21 @@ func (f *fakeBitableFeishu) setSearch(items []map[string]any) {
 
 func (f *fakeBitableFeishu) openAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if r.Body != nil {
+		raw, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		var parsed map[string]any
+		_ = json.Unmarshal(raw, &parsed)
+		f.mu.Lock()
+		f.requests = append(f.requests, fakeBitableRequest{Method: r.Method, Path: r.URL.Path, Body: parsed})
+		f.mu.Unlock()
+	}
 	switch {
 	case strings.Contains(r.URL.Path, "/auth/v3/tenant_access_token/internal"):
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","tenant_access_token":"tenant-token","expire":7200}`))
 	case strings.HasSuffix(r.URL.Path, "/fields"):
 		items := []any{}
-		for _, name := range []string{"业务编号", "标题", "状态", "描述", "负责人", "项目", "仓库", "外链"} {
+		for _, name := range []string{"业务编号", "标题", "状态", "描述", "验收标准", "负责人", "项目", "仓库", "外链"} {
 			items = append(items, map[string]any{"field_name": name, "field_id": "fld-" + name, "type": 1})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"items": items, "has_more": false}})
@@ -134,6 +154,8 @@ func (f *fakeBitableFeishu) openAPI(w http.ResponseWriter, r *http.Request) {
 		items := append([]map[string]any(nil), f.searchItems...)
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"items": items, "has_more": false}})
+	case strings.Contains(r.URL.Path, "/records/batch_update"):
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"records":[]}}`))
 	case strings.Contains(r.URL.Path, "/subscribe"):
 		f.mu.Lock()
 		f.subscribeCalls++
@@ -142,6 +164,18 @@ func (f *fakeBitableFeishu) openAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// lastRequest returns the most recent recorded call whose path contains key.
+func (f *fakeBitableFeishu) lastRequest(key string) (fakeBitableRequest, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.requests) - 1; i >= 0; i-- {
+		if strings.Contains(f.requests[i].Path, key) {
+			return f.requests[i], true
+		}
+	}
+	return fakeBitableRequest{}, false
 }
 
 func (f *fakeBitableFeishu) waitConn(t *testing.T) *websocket.Conn {

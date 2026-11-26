@@ -62,6 +62,10 @@ type Issue struct {
 	// It does not create a tracker binding or authorize TAPD write-back.
 	TapdID      string       `json:"tapdId,omitempty"`
 	ExternalRef *ExternalRef `json:"externalRef,omitempty"`
+	// ExternalPendingAction is the status action deferred because the Work
+	// Item already had an active Run. It is applied when a later projection
+	// finds the Work Item idle again; local execution context is preserved.
+	ExternalPendingAction *WorkItemPendingAction `json:"externalPendingAction,omitempty"`
 	// ConversationSessionID is the conversation that identified and created
 	// this requirement while changing code directly, without an SOP.
 	ConversationSessionID string    `json:"conversationSessionId,omitempty"`
@@ -220,6 +224,15 @@ type ExternalRef struct {
 	// evidence is kept; automatic trigger stops.
 	Orphaned   bool      `json:"orphaned,omitempty"`
 	OrphanedAt time.Time `json:"orphanedAt,omitempty"`
+	// StatusHistory keeps the recently observed external business statuses so
+	// a regression (entering a value already seen) can be recorded without
+	// triggering an action. It is capped and never authoritative.
+	StatusHistory []string `json:"statusHistory,omitempty"`
+	// WritebackState is the last status this system wrote back. It lets the
+	// projection recognize its own write when an event arrives, which prevents
+	// a writeback/event loop.
+	WritebackState string    `json:"writebackState,omitempty"`
+	WritebackAt    time.Time `json:"writebackAt,omitempty"`
 	// Imported is set for 导入 TAPD / 新建 TAPD. Iteration sync must not
 	// delete these just because they are outside the current TAPD pool.
 	Imported bool `json:"imported,omitempty"`
