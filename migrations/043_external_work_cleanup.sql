@@ -15,7 +15,10 @@
 --   2. Take a full dump, for example:
 --        mysqldump --single-transaction --routines --triggers \
 --          -u <user> -p <database> > loopforge-before-043.sql
---   3. Run 043_external_work_cleanup_dry_run.sql and review every count.
+--   3. If bot_clarify_sessions does not exist yet, start the new binary once
+--      so AutoMigrate creates it, then stop every writer again. Do not create
+--      a Management Connection before the cleanup.
+--   4. Run 043_external_work_cleanup_dry_run.sql and review every count.
 --
 -- The *_cleanup_043_backup tables copy the removed rows before deletion. They
 -- are the in-database rollback copy for the rollback window. Drop them only

@@ -313,6 +313,10 @@ mysqldump --single-transaction --routines --triggers \
   -u <user> -p <database> > loopforge-before-043.sql
 ```
 
+If you are upgrading from a release that predates `bot_clarify_sessions`,
+start the new binary once so AutoMigrate creates the table, then stop every
+writer again. Do not create a Management Connection before the cleanup.
+
 Preview the pending counts. The `*_preserved` rows prove that execution
 evidence is out of scope:
 

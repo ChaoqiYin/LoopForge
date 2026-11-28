@@ -1,5 +1,7 @@
 -- Preview for 043_external_work_cleanup.sql. It changes no data.
 -- Run it first and compare the counts with the row counts you expect.
+-- If bot_clarify_sessions does not exist yet, start the new binary once so
+-- AutoMigrate creates it, then stop every writer before running this preview.
 -- "pending" is the number of business rows the cleanup will remove.
 -- The preserved counts prove that execution evidence is out of scope.
 -- A Work Item projected from the Management Connection has
