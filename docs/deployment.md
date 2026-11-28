@@ -279,6 +279,7 @@ For an external MySQL deployment, review that migration and check column existen
 | Already applied by the installer and `./start.sh pull` | `001_run_obs_generated_columns.sql`, `migrations/seed/*.sql`, `033_generic_sop_mr_node.sql`, `038_generic_sop_host_credentials.sql` | Nothing; the script above covers it |
 | Applied before startup by `./start.sh pull` for an existing Compose database | `041_native_sandbox_inline_assets.sql` | See [Migrating existing sandboxes to inline assets](#migrating-existing-sandboxes-to-inline-assets) |
 | Required manual upgrade migrations | `009_bot_interactions_utf8mb4.sql`, `036_git_http_credentials.sql` | Follow each migration's timing and prerequisites. [Migrating existing GitHub credentials](#migrating-existing-github-credentials) |
+| One-time external Work Item cutover | `043_external_work_cleanup.sql` | Run the dry-run first and keep the backup. [One-time external Work Item cutover](#one-time-external-work-item-cutover) |
 | Optional backfills and rewrites of existing rows | `016_public_optional_repositories.sql`, `021_assistant_session_sources.sql` | Run them if the installation needs the converted rows |
 
 Compose runs `migrations/042_run_artifacts_content_mediumtext.sql` before the
@@ -292,7 +293,85 @@ SQL file in the deployment's database upgrade step before starting the new binar
 If the Compose migration fails, review `docker compose --profile platform logs
 artifact-migration`, resolve the database error and rerun the upgrade.
 
-### Migrating existing sandboxes to inline assets
+## One-time external Work Item cutover
+
+The external work management release stops treating LoopForge as a requirement
+authority. The cutover removes legacy locally managed requirement data while
+keeping execution evidence. It is manual and is never run by the installer,
+`./start.sh pull` or application startup.
+
+Run it only when all three conditions hold:
+
+- The release supports Management Connections and the Feishu Bitable adapter.
+- All API and worker processes that write the database are stopped.
+- A full database dump and the deployment's `.env` are saved together.
+
+Take the dump while MySQL is still running:
+
+```bash
+mysqldump --single-transaction --routines --triggers \
+  -u <user> -p <database> > loopforge-before-043.sql
+```
+
+Preview the pending counts. The `*_preserved` rows prove that execution
+evidence is out of scope:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' \
+  < migrations/043_external_work_cleanup_dry_run.sql
+```
+
+Review every row before continuing. `issues`, `issue_comments`,
+`requirement_spaces` and `bot_clarify_sessions` are the business rows that will
+be removed. `tasks_preserved`, `runs_preserved` and `run_events_preserved`
+report rows that must remain. For an external MySQL deployment, run the two
+commands with that server's client instead.
+
+Apply the cleanup:
+
+```bash
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u loopforge loopforge' \
+  < migrations/043_external_work_cleanup.sql
+```
+
+The script first copies the rows it removes into
+`issues_cleanup_043_backup`, `issue_comments_cleanup_043_backup`,
+`requirement_spaces_cleanup_043_backup` and
+`bot_clarify_sessions_cleanup_043_backup`. It then deletes only legacy business
+rows. Work Items with `source = 'feishu_bitable'`, their comments, their
+collaboration spaces and their clarification sessions are kept, so the script
+can be run again safely. No table is dropped, and `tasks`, `runs`, `run_events`
+and trace evidence are untouched. Their `issue_id` values may refer to a
+removed row, which the execution history views must tolerate.
+
+After the cleanup:
+
+1. Start the upgraded platform.
+2. Create the single Management Connection and run its self-check.
+3. Run **Sync now** and verify that Formal Work Items appear with external
+   titles, business keys and links.
+4. Open a historical Run to confirm that its Work Item snapshot and trace are
+   still readable.
+5. Keep the dump and the `*_cleanup_043_backup` tables for the rollback window.
+
+### Rollback window
+
+The rollback target is the dump plus the previous binary, not the backup tables
+alone. Restoring only the `*_cleanup_043_backup` rows does not recreate
+external state written after the cutover.
+
+To roll back inside the window:
+
+1. Stop the new platform and every worker.
+2. Inspect or export anything created after the cutover that must be kept.
+3. Restore `loopforge-before-043.sql` into the database.
+4. Start the previous release.
+
+After a verified full sync and an accepted rollback decision, drop the four
+`*_cleanup_043_backup` tables and delete the pre-cutover dump according to the
+deployment's retention policy.
+
+## Migrating existing sandboxes to inline assets
 
 For a published Compose release, check out the target release and run `./start.sh pull`. If other API or worker processes share the Compose database, stop them first. After pulling the images, the command checks that the target image supports inline Dockerfiles and that the database still has a legacy asset table. When both conditions hold, it stops the platform, saves a database dump in `.local/loopforge-before-041.*/loopforge.sql`, and runs 041 before starting the new platform. An empty database or one whose legacy tables are already gone skips 041.
 

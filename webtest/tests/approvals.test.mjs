@@ -49,7 +49,7 @@ test('approval helpers explain gates, failures, pauses, and contextual payloads'
   assert.equal(JSON.stringify(result.pausedNodes), JSON.stringify(['review']));
 });
 
-test('approval list sends context and removes the approved run after refreshing', async (t) => {
+test('approval center is read-only while internal gate actions stay in the run detail', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const run = {
@@ -62,31 +62,31 @@ test('approval list sends context and removes the approved run after refreshing'
     nodes: { review: { status: 'waiting_approval' } },
   };
   app.router.get('/api/runs/approval-run', run);
-  app.router.post('/api/runs/approval-run/approve', { ok: true });
-  app.router.get('/api/runs', [{ ...run, status: 'running' }]);
+  app.router.get('/api/runs', [run]);
   app.router.get('/api/tasks', []);
   app.router.get('/api/issues', []);
-  app.router.post('/api/runs/approval-run/retry', { ...run, status: 'running' });
-  app.router.post('/api/runs/approval-run/resume', { ...run, status: 'running' });
-  app.router.post('/api/runs/approval-run/pause', { ok: true });
   app.evaluate(`
     state.currentUser={id:7,loginName:'reviewer'};
     state.data.runs=${JSON.stringify([run])};
     state.data.tasks=[];state.data.issues=[];
+    switchView('approvals');
   `);
-  await app.evaluate(`renderApprovals(true)`);
+  await settle(6);
   const card = app.document.querySelector('#approvalList .ap-card');
   assert.match(card.textContent, /交付 SOP/);
-  assert.match(card.textContent, /为什么需要人工确认/);
-  card.querySelector('[data-human-context]').value = '验收通过，保留截图';
-  card.querySelector('[data-approve]').click();
-  await settle(6);
-  const call = app.router.calls.find(c => c.path === '/api/runs/approval-run/approve');
-  assert.equal(call.method, 'POST');
-  assert.equal(call.body.context, '验收通过，保留截图');
-  assert.equal(app.document.querySelector('#approvalList .ap-card'), null);
-  assert.match(app.document.querySelector('#approvalList').textContent, /没有需要你拍板的需求/);
+  assert.match(card.textContent, /只读/);
+  assert.equal(card.querySelector('[data-approve]'), null, '审批中心不提供通过操作');
+  assert.equal(card.querySelector('[data-reject]'), null);
+  assert.equal(card.querySelector('[data-retry-node]'), null);
+  assert.equal(card.querySelector('[data-human-context]'), null);
+  assert.equal(app.document.querySelector('#approvalBatch'), null, '审批中心不再提供批量审批');
+  assert.equal(app.document.querySelector('[data-ap-batch-approve]'), null);
+  assert.equal(app.router.calls.some(c => c.method === 'POST' && /approve|reject|retry/.test(c.path)), false);
 
+  // Gate decisions remain available from the run detail path used by the drawer.
+  app.router.post('/api/runs/approval-run/retry', { ...run, status: 'running' });
+  app.router.post('/api/runs/approval-run/resume', { ...run, status: 'running' });
+  app.router.post('/api/runs/approval-run/pause', { ok: true });
   app.evaluate(`
     state.data.runs=[${JSON.stringify(run)}];
     state.activeRun=state.data.runs[0];

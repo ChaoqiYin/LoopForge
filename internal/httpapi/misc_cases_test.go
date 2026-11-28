@@ -413,6 +413,12 @@ func TestMiscRoomAuthorizationRosterAndSuccessHTTP(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.s.PutIssue(domain.Issue{
+		ID: "cvb-room-issue", ProjectID: project.ID, Title: "synced room issue", Status: "todo", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-room-issue", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-room-issue"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	created := cvBMiscRequestAs(t, f, owner, http.MethodPost, "/api/rooms", map[string]any{
 		"projectId": project.ID, "name": "Room",
 	})
@@ -435,13 +441,18 @@ func TestMiscRoomAuthorizationRosterAndSuccessHTTP(t *testing.T) {
 		{viewer, http.MethodPost, base + "/messages", map[string]any{"body": "no"}, http.StatusForbidden},
 		{member, http.MethodPost, base + "/messages", map[string]any{"body": "yes"}, http.StatusCreated},
 		{outsider, http.MethodGet, base, nil, http.StatusForbidden},
-		{owner, http.MethodPost, base + "/issues", map[string]any{"title": "new issue", "description": "work", "workflowId": "cvb-room-wf"}, http.StatusCreated},
+		{owner, http.MethodPost, base + "/issues", map[string]any{"issueId": "cvb-room-issue", "workflowId": "cvb-room-wf"}, http.StatusCreated},
 	} {
 		rec := cvBMiscRequestAs(t, f, tc.user, tc.method, tc.path, tc.body)
 		if rec.Code != tc.want {
 			t.Fatalf("room case %d = %d want %d: %s", i, rec.Code, tc.want, rec.Body.String())
 		}
 	}
+	t.Cleanup(func() {
+		for _, run := range f.s.Runs() {
+			_ = f.e.Cancel(run.ID)
+		}
+	})
 
 	h := &roomsHandlers{deps: &deps{repo: f.s, engine: f.e}}
 	if roster := h.projectRoster("missing"); len(roster) != 0 {

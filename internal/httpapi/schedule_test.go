@@ -656,7 +656,7 @@ func TestScheduleUIDemoServer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	prompt := `你是项目 DP（projectId: dp）的需求预分诊助手。调用 issues_list，query={"status":"backlog","limit":50}，按 offset 翻页直到 hasMore=false。没有 backlog 则输出“无待处理需求”。对 source=gongfeng / kind=issue：确认 workflowId=demodns-issue-fix，仓库缺失时结合标题与 repositories_list 判断，仅高把握用 issues_save。不要 issues_dispatch。对 source=tapd：无 TAPD MCP 时跳过处理人同步，仓库与 SOP 置信度不足则跳过。写操作只允许 issues_save，每轮最多 12 个。输出 Markdown 表格：需求编号 | 标题 | 来源 | 处理动作 | 置信度 | 说明。`
+	prompt := `你是项目 DP（projectId: dp）的需求预分诊助手。调用 issues_list，query={"status":"backlog","limit":50}，按 offset 翻页直到 hasMore=false。没有 backlog 则输出“无待处理需求”。对 source=gongfeng / kind=issue：确认 workflowId=demodns-issue-fix，仓库缺失时结合标题与 repositories_list 判断，仅高把握用 issues_dispatch。不要本地建单。对 source=tapd：无 TAPD MCP 时跳过处理人同步，仓库与 SOP 置信度不足则跳过。写操作只允许 issues_dispatch，每轮最多 12 个。输出 Markdown 表格：需求编号 | 标题 | 来源 | 处理动作 | 置信度 | 说明。`
 	if err := st.PutScheduleJob(domain.ScheduleJob{
 		ID: "job-triage", Name: "DP backlog 需求预分诊", ProjectID: "dp", SkipDispatch: true,
 		AssistantPrompt: prompt, AssistantModel: "default", Enabled: true, IntervalSec: 3600,

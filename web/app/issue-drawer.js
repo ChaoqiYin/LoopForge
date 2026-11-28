@@ -515,7 +515,6 @@ function issueProgressActionsHTML(issue,run,{includeIssueActions=false}={}){
     logActions.push(`<button class="button ghost small" data-export-logs="${runId}">导出全部 Worker 日志</button>`);
   }
   if(includeIssueActions){
-    issueActions.push('<button class="button ghost small" data-edit-issue>编辑需求</button>');
     if(issueCanPushTAPD(issue))issueActions.push(`<button class="button ghost small" data-push-tapd="${escapeHTML(issue.id)}">同步到 TAPD</button>`);
     if(issueCanClose(issue)&&issue.status!=='done'&&!issueManuallyClosed(issue)&&!issueTrackerClosed(issue)&&!deliveryLocked(issue))issueActions.push(`<button class="button ghost small" data-close-issue="${escapeHTML(issue.id)}">关闭需求</button>`);
     issueActions.push(issueDeleteControlHTML(issue));
@@ -548,6 +547,19 @@ function overviewPane(issue,data){
   const banner=ch?`<div class="issue-outcome conv-outcome ${escapeHTML(ch.tone)}"><span class="conv-outcome-kicker">对话交付</span><b>${escapeHTML(ch.label)}</b><p>${escapeHTML(ch.hint||'')}</p><div class="issue-outcome-actions">${actions}</div></div>`
     :`<div class="issue-outcome ${out.key}"><b>${escapeHTML(out.title)}</b><p>${escapeHTML(out.body)}</p><div class="issue-outcome-actions">${actions}</div></div>`;
   const facts=`<div class="detail-grid">${drawerFact('责任人',issueAssigneeName(issue)||'未指定')}${drawerFact('优先级',issuePriorityLabel(issue.priority))}${drawerFact('来源',issueSourceLabel(issue))}${metricsIssueSource(issue)==='local'?drawerFact('统计关联 TAPD',escapeHTML(issue.tapdId||'未绑定（仍参与统计）')):''}${drawerFact('触发方式',convo?'对话工作区':escapeHTML(taskTriggerInfo(data.task).label))}${drawerFact('关联 SOP',convo?'无 · 对话里直接改代码':(issueWithoutSOP(issue)?'不使用 SOP':escapeHTML(workflow?.name||'未关联')))}${drawerFact('代码仓库',escapeHTML(repo?.name||'未绑定'))}${convo?drawerFact('工作分支',escapeHTML(conversationWorkBranchNames(issue,data)||'—')):drawerFact('继续开发分支',escapeHTML(storedIssueWorkBranch(issue)||'自动新建'))}</div>`;
+  const ref=issue.externalRef||{};
+  const externalKey=workItemExternalKey?workItemExternalKey(issue):(ref.businessKey||ref.externalId||ref.recordId||'');
+  const externalURL=workItemExternalURL?workItemExternalURL(issue):(ref.externalUrl||'');
+  const externalState=workItemExternalState?workItemExternalState(issue):(ref.externalState||'');
+  const externalFacts=(externalKey||externalURL)?`<div class="detail-grid execution-detail-external">
+    ${drawerFact('外部 ID',escapeHTML(externalKey||'—'),externalKey)}
+    ${drawerFact('外部业务状态',escapeHTML(externalState||'未同步'))}
+    ${drawerFact('内部执行状态',escapeHTML(executionStatusLabel(run)))}
+    ${drawerFact('来源',escapeHTML(workItemSourceLabel?workItemSourceLabel(issue):(issue.source||'—')))}
+    ${drawerFact('当前 Agent',escapeHTML(executionAgentLabel?executionAgentLabel(issue,run,workflow):(issue.externalAssignee||'未指定')))}
+    ${drawerFact('最近执行',escapeHTML(executionRecentLabel?executionRecentLabel(run):'—'))}
+    ${externalURL?drawerFact('外部记录',`<a href="${escapeHTML(safeURL(externalURL))}" target="_blank" rel="noopener noreferrer">在外部平台打开 ↗</a>`):''}
+  </div>`:'';
   const description=issue.description?`<div class="markdown-body">${renderRequirementMarkdown(issue.description)}</div>`:'';
   const images=(data.images||[]).map(image=>{
     const url=`/api/issues/${encodeURIComponent(issue.id)}/images/${encodeURIComponent(image.id)}`;
@@ -556,7 +568,7 @@ function overviewPane(issue,data){
   }).join('');
   const gallery=images?`<ul class="issue-description-images" aria-label="需求图片">${images}</ul>`:'';
   const content=description||gallery?`<div class="detail-desc issue-description">${description}${gallery}</div>`:'';
-  return `<div class="detail-section">${banner}${facts}${content}${clarificationOverviewCard(issue)}</div>`;
+  return `<div class="detail-section">${banner}${externalFacts}${facts}${content}${clarificationOverviewCard(issue)}</div>`;
 }
 function clarifyHistoryHTML(c){
   const rows=[];

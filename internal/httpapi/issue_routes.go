@@ -66,6 +66,9 @@ type clarificationSubmission struct {
 }
 
 func (h issuesHandlers) submitIssueClarification(c *gin.Context, issue domain.Issue) {
+	if !h.requireFormalWorkItem(c, issue, "澄清") {
+		return
+	}
 	var request clarificationSubmission
 	if !decode(c, &request) {
 		return
@@ -151,6 +154,16 @@ func applyClarificationSubmission(issue domain.Issue, request clarificationSubmi
 	return issue, nil
 }
 
+// requireFormalWorkItem keeps clarification on Work Items projected from an
+// External Record. Local issues no longer exist as a general surface.
+func (h issuesHandlers) requireFormalWorkItem(c *gin.Context, issue domain.Issue, action string) bool {
+	if issue.FormalWorkItem() {
+		return true
+	}
+	c.JSON(http.StatusConflict, map[string]string{"error": "只有绑定外部记录的 Work Item 支持" + action})
+	return false
+}
+
 // issueSyncedFromTracker reports whether clarification can be written back
 // to an external tracker ticket.
 func issueSyncedFromTracker(issue domain.Issue) bool {
@@ -158,6 +171,9 @@ func issueSyncedFromTracker(issue domain.Issue) bool {
 }
 
 func (h issuesHandlers) chatClarifyIssue(c *gin.Context, issue domain.Issue) {
+	if !h.requireFormalWorkItem(c, issue, "澄清") {
+		return
+	}
 	if c.Request.Method == http.MethodGet {
 		h.stream.attachIssueClarify(c, issue)
 		return

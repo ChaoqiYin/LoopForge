@@ -79,9 +79,6 @@ func TestScheduledAssistantNativeGatewayKeepsWorkspaceAndTerminalReply(t *testin
 	h, user := workbenchFixture(t)
 	h.engine = engine.New(h.repo, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h.api = New(h.repo, h.engine, tracker.NewService(), "", "")
-	if err := h.repo.PutIssue(domain.Issue{ID: "native-scheduled-issue", ProjectID: "workbench", Title: "Original", Status: "todo"}); err != nil {
-		t.Fatal(err)
-	}
 	sessionIDs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.Split(strings.TrimPrefix(r.URL.Path, "/internal/agent-tools/"), "/")[0]
@@ -134,7 +131,7 @@ for tool, args in dispatches:
     req = urllib.request.Request(url, json.dumps(call).encode(), {'Content-Type':'application/json'})
     result = json.load(urllib.request.urlopen(req, timeout=5))['result']
     assert result['isError'] and 'agentflow__' + tool in result['content'][0]['text'], result
-payload = {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'submit_assistant_reply','arguments':{'message':'已完成定时巡检并生成报告。','drafts':[{'tool':'issues_save','body':{'id':'native-scheduled-issue','projectId':'workbench','title':'Scheduled update'}}]}}}
+payload = {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'submit_assistant_reply','arguments':{'message':'已完成定时巡检并生成报告。','drafts':[{'tool':'agents_save','body':{'id':'native-scheduled-agent','projectId':'workbench','name':'巡检后角色'}}]}}}
 req = urllib.request.Request(url, json.dumps(payload).encode(), {'Content-Type':'application/json'})
 try:
     urllib.request.urlopen(req, timeout=5).read()
@@ -162,9 +159,9 @@ raise SystemExit(1)
 	case <-time.After(time.Second):
 		t.Fatal("fake CLI did not reach the prepared native session")
 	}
-	issue, _ := h.repo.Issue("native-scheduled-issue")
-	if issue.Title != "Scheduled update" {
-		t.Fatalf("terminal draft was not executed with full access: %+v", issue)
+	agent, _ := h.repo.Agent("native-scheduled-agent")
+	if agent.Name != "巡检后角色" {
+		t.Fatalf("terminal draft was not executed with full access: %+v", agent)
 	}
 	conv, ok := h.repo.AssistantSession(user.ID, task.SessionID)
 	if !ok || task.SessionID != sessionID || conv.WorkspaceRunID != "scheduled-workspace" || !slices.Contains(conv.OwnWorkspaceRunIDs, "scheduled-workspace") {

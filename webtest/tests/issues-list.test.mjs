@@ -97,51 +97,32 @@ test('issue list helpers filter, format, parse repositories, and persist edits',
       status:'todo',priority:'high',source:'local',repositoryIds:['repo-1'],baseBranch:'feature/old'}];
     openIssue(state.data.issues[0]);
   `);
-  assert.equal(app.document.querySelector('#issueModal').classList.contains('open'), true);
-  assert.equal(app.document.querySelector('#issueForm [name="title"]').value, 'Edit me');
-  assert.match(app.document.querySelector('#issueForm [name="baseBranch"]').placeholder, /main/);
-  app.evaluate(`openImportTAPDModal();setImportTAPDRepositoryIds(['repo-1']);
-    document.querySelector('#importTAPDURL').value='https://tapd.example/story/88'`);
-  await app.evaluate(`importTAPDStory({preventDefault(){}})`);
-  await settle(2);
-  const imported = app.router.calls.find(c => c.path === '/api/issues/import-tapd');
-  assert.deepEqual(imported.body.repositoryIds, ['repo-1']);
-  assert.equal(imported.body.url, 'https://tapd.example/story/88');
-  app.evaluate(`
-    state.data.issues=[{id:'kanban-1',projectId:'project-1',number:9,title:'Move card',
-      status:'backlog',priority:'medium',source:'local',workflowId:'flow-1'}];
-    state.issueView='kanban';renderIssues();
-    const card=document.querySelector('.kanban-card');
-    const transfer={value:'',setData(_t,v){this.value=v},getData(){return this.value},effectAllowed:'',dropEffect:''};
-    card.ondragstart({dataTransfer:transfer});card.ondrag();
-    card.ondragend();window.__kanbanTransfer=transfer;
-  `);
-  const doneColumn = [...app.document.querySelectorAll('.kanban-column')].find(x => x.dataset.status === 'done');
-  await app.evaluate(`document.querySelector('.kanban-column[data-status="done"]').ondrop({
-    preventDefault(){},dataTransfer:window.__kanbanTransfer})`);
-  assert.equal(app.router.calls.filter(c => c.method === 'PUT' && c.path === '/api/issues').at(-1).body.status, 'done');
-  await settle(1);
+  assert.equal(app.document.querySelector('#issueModal').classList.contains('open'), false, 'Work Item 内容只读');
+  assert.match(app.document.querySelector('#toastContainer').textContent, /Work Item 只读/);
+  assert.equal(app.document.querySelector('#newIssue'), null);
+  assert.equal(app.document.querySelector('#importTAPDIssue'), null);
+  assert.equal(app.document.querySelector('[data-issue-view]'), null, '执行中心只保留列表，不再提供本地拖拽看板');
 });
 
-test('issue row actions close and delete eligible issues through named controls', async (t) => {
+test('execution center rows expose no local close, delete, or edit actions', async (t) => {
   const app = await loadApp();
   t.after(app.close);
   const issue = { ...app.evaluate('structuredClone(state.data.issues[0])'), status: 'backlog',
+    externalRef: { source: 'feishu_bitable', externalId: 'rec-9', externalState: '开发中' },
     closureAllowed: true, deletionAllowed: true };
-  app.router.post('/api/issues/issue-1/close', { ...issue, status: 'closed', closeSource: 'manual' });
-  app.router.delete('/api/issues/issue-1', { ok: true });
+  app.router.get('/api/issues/issue-1', { issue, comments: [] });
   app.evaluate(`state.data.issues=[${JSON.stringify(issue)}];state.projectFilter='project-1';
-    window.afConfirm=async()=>true;renderIssues()`);
-  app.evaluate(`showIssueActionMenu({preventDefault(){},stopPropagation(){},currentTarget:document.querySelector('[data-issue-menu]')},'issue-1')`);
-  app.document.querySelector('#issueActionPopover [data-action="close"]').click();
+    state.data.tasks=[];state.data.runs=[];switchView('executions')`);
   await settle(4);
-  assert.equal(app.evaluate(`state.data.issues[0].status`), 'closed');
-  assert.equal(app.router.calls.find(c => c.path.endsWith('/close'))?.method, 'POST');
-  app.evaluate(`state.data.issues[0].status='backlog';state.data.issues[0].closeSource='';renderIssues();
-    showIssueActionMenu({preventDefault(){},stopPropagation(){},currentTarget:document.querySelector('[data-issue-menu]')},'issue-1')`);
-  app.document.querySelector('#issueActionPopover [data-action="delete"]').click();
-  await settle(5);
-  assert.equal(app.router.calls.find(c => c.method === 'DELETE')?.path, '/api/issues/issue-1');
+  assert.equal(app.document.querySelector('[data-issue-menu]'), null);
+  assert.equal(app.document.querySelector('[data-action="close"]'), null);
+  assert.equal(app.document.querySelector('[data-action="delete"]'), null);
+  assert.equal(app.document.querySelector('[data-edit-issue]'), null);
+  app.document.querySelector('.issue-table-row[data-id="issue-1"]').click();
+  await settle(4);
+  assert.equal(app.document.querySelector('#issueDetailDrawer').classList.contains('open'), true);
+  assert.equal(app.router.calls.some(c => c.method === 'POST' && /\/close$/.test(c.path)), false);
+  assert.equal(app.router.calls.some(c => c.method === 'DELETE'), false);
 });
 
 test('rerun-from-node dialog returns the selected node and human context', async (t) => {

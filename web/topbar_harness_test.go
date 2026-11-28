@@ -26,9 +26,13 @@ func TestTopbarHarnessStylesheet(t *testing.T) {
 	if at < 0 {
 		t.Fatalf("index.html must load /app/topbar-harness.css, got %v", links)
 	}
-	// Only the #approvalsView-scoped sheet, which never touches .topbar, may follow it.
-	if tail := links[at+1:]; len(tail) > 1 || (len(tail) == 1 && tail[0] != "/app/approvals-harness.css") {
-		t.Fatalf("/app/topbar-harness.css must load after every stylesheet that styles the topbar, got %v", links)
+	// Only the #approvalsView-scoped sheet and the external-work page sheets,
+	// which never touch .topbar, may follow it.
+	allowedTail := map[string]bool{"/app/approvals-harness.css": true, "/app/external-work.css": true}
+	for _, link := range links[at+1:] {
+		if !allowedTail[link] {
+			t.Fatalf("/app/topbar-harness.css must load after every stylesheet that styles the topbar, got %v", links)
+		}
 	}
 
 	body := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")

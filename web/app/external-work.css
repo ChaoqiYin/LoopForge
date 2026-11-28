@@ -1,0 +1,152 @@
+/* 外部工作事项驱动：执行中心、只读审批中心、系统配置与代码仓库。
+ * 只引用 harness-ui.css 的 --hui-* 令牌，沿用面板 / 徽标 / 输入 / 按钮语言。
+ */
+
+/* ---------- 执行中心 ---------- */
+#issuesView .execution-table {
+  --issue-cols: minmax(104px, 132px) minmax(190px, 1.7fr) 118px 124px 116px minmax(170px, 1.2fr) 104px 104px 196px;
+  min-width: max(100%, 1240px);
+}
+#issuesView .execution-table-head > span,
+#issuesView .execution-row > div { min-width: 0; }
+#issuesView .execution-row { cursor: pointer; }
+#issuesView .execution-external-key { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hui-accent); font: 500 12.5px/1.4 var(--hui-mono, var(--hui-sans)); text-decoration: none; }
+#issuesView .execution-external-key:hover { text-decoration: underline; }
+#issuesView .execution-state-cell,
+#issuesView .execution-run-cell,
+#issuesView .execution-recent-cell { font-size: 12.5px; color: var(--hui-secondary); }
+#issuesView .execution-sop-cell { display: grid; gap: 2px; min-width: 0; }
+#issuesView .execution-sop-cell b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12.5px/1.4 var(--hui-sans); color: var(--hui-text); }
+#issuesView .execution-sop-cell span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--hui-muted); }
+#issuesView .execution-run-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--hui-border-strong); border-radius: 7px; background: var(--hui-surface); color: var(--hui-secondary); font: 500 12px/1 var(--hui-mono, var(--hui-sans)); padding: 5px 7px; cursor: pointer; }
+#issuesView .execution-run-link:hover { background: var(--hui-canvas); color: var(--hui-text); }
+#issuesView .execution-row .issue-actions-cell { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+#issuesView .execution-row .issue-actions-cell .button { white-space: nowrap; }
+#issuesView .issue-source-chip.tone-feishu { border-color: color-mix(in srgb, var(--hui-accent) 28%, var(--hui-border)); background: var(--hui-accent-soft); color: var(--hui-accent); }
+#issuesView .issue-source-chip.tone-neutral { background: var(--hui-soft); color: var(--hui-secondary); }
+
+/* ---------- 审批中心（只读） ---------- */
+#approvalsView .approval-external-panel { margin: 0 0 18px; border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-surface); overflow: hidden; }
+#approvalsView .approval-external-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--hui-border-soft); background: var(--hui-canvas); }
+#approvalsView .approval-external-head b { font: 600 14px/1.3 var(--hui-sans); color: var(--hui-text); }
+#approvalsView .approval-external-head span { font-size: 12.5px; color: var(--hui-muted); }
+#approvalsView .approval-gate-head { margin: 0 0 10px; border: 0; border-bottom: 1px solid var(--hui-border-soft); background: transparent; border-radius: 0; padding: 4px 2px 10px; }
+#approvalsView .approval-external-list { display: grid; }
+#approvalsView .external-approval-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--hui-border-soft); }
+#approvalsView .external-approval-row:first-child { border-top: 0; }
+#approvalsView .external-approval-main { display: grid; gap: 4px; min-width: 0; }
+#approvalsView .external-approval-title a,
+#approvalsView .external-approval-title b { color: var(--hui-text); font: 500 14px/1.35 var(--hui-sans); text-decoration: none; }
+#approvalsView .external-approval-title a:hover { color: var(--hui-accent); text-decoration: underline; }
+#approvalsView .external-approval-meta { display: flex; gap: 10px; flex-wrap: wrap; color: var(--hui-muted); font-size: 12px; }
+#approvalsView .external-approval-meta code { font-family: var(--hui-mono, var(--hui-sans)); color: var(--hui-secondary); }
+#approvalsView .external-approval-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+#approvalsView .approval-readonly-note { color: var(--hui-tertiary); }
+#approvalsView .ap-card-readonly .ap-side { align-items: flex-start; }
+#approvalsView .approval-readonly-body { border-top: 1px solid var(--hui-border-soft); }
+#approvalsView .approval-external-empty { border: 0; }
+
+/* ---------- 通用面板（系统配置 / 代码仓库） ---------- */
+#systemConfigView .wm-shell,
+#repositoriesView .repo-config-shell { display: grid; gap: 16px; }
+#systemConfigView .wm-grid { display: grid; gap: 16px; }
+#systemConfigView .wm-panel,
+#repositoriesView .wm-panel { border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); box-shadow: var(--hui-panel-shadow); overflow: hidden; }
+#systemConfigView .wm-panel-head,
+#repositoriesView .wm-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--hui-border-soft); }
+#systemConfigView .wm-panel-head h2,
+#repositoriesView .wm-panel-head h2 { margin: 0; font: 600 15px/1.35 var(--hui-sans); color: var(--hui-text); }
+#systemConfigView .wm-panel-head p,
+#repositoriesView .wm-panel-head p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--hui-muted); }
+#systemConfigView .wm-panel-badge { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+#systemConfigView .wm-readiness-msg { font-size: 12px; color: var(--hui-muted); max-width: 320px; }
+#systemConfigView .wm-form,
+#repositoriesView .wm-form { display: grid; gap: 12px; padding: 16px 18px; }
+#systemConfigView .wm-field,
+#repositoriesView .wm-field { display: grid; gap: 6px; min-width: 0; }
+#systemConfigView .wm-field > span,
+#repositoriesView .wm-field > span { font: 500 12.5px/1.3 var(--hui-sans); color: var(--hui-secondary); }
+#systemConfigView .wm-field input,
+#systemConfigView .wm-field select,
+#repositoriesView .wm-field input,
+#repositoriesView .wm-field select { width: 100%; height: 36px; box-sizing: border-box; border: 1px solid var(--hui-border-strong); border-radius: 8px; background: var(--hui-surface); color: var(--hui-text); padding: 0 10px; font: 400 13px/1.3 var(--hui-sans); }
+#systemConfigView .wm-field input:focus,
+#systemConfigView .wm-field select:focus,
+#repositoriesView .wm-field input:focus,
+#repositoriesView .wm-field select:focus { outline: none; border-color: var(--hui-accent); box-shadow: var(--hui-focus-ring); }
+#systemConfigView .wm-field input[readonly] { background: var(--hui-canvas); color: var(--hui-muted); }
+#systemConfigView .wm-row,
+#repositoriesView .wm-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+#systemConfigView .wm-switches { display: grid; gap: 10px; margin: 2px 0 0; }
+#systemConfigView .wm-switch { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--hui-border-soft); border-radius: 9px; background: var(--hui-canvas); }
+/* The switch itself uses the shared Harness Switch (.hui-switch); only the
+ * row layout belongs to this panel. */
+#systemConfigView .wm-switch .hui-switch { margin-top: 1px; flex: none; }
+#systemConfigView .wm-switch span { display: grid; gap: 2px; }
+#systemConfigView .wm-switch b { font: 500 13px/1.35 var(--hui-sans); color: var(--hui-text); }
+#systemConfigView .wm-switch small { font-size: 12px; line-height: 1.45; color: var(--hui-muted); }
+#systemConfigView .wm-actions,
+#repositoriesView .wm-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+#systemConfigView .wm-actions .button:disabled,
+#repositoriesView .wm-actions .button:disabled { opacity: .45; cursor: not-allowed; }
+#systemConfigView .wm-hint,
+#repositoriesView .wm-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--hui-muted); }
+#systemConfigView .wm-empty,
+#repositoriesView .wm-empty { margin: 0; padding: 6px 0; font-size: 12.5px; color: var(--hui-muted); }
+#systemConfigView .wm-loading,
+#repositoriesView .wm-loading { display: flex; align-items: center; gap: 8px; padding: 18px; border: 1px solid var(--hui-border); border-radius: 14px; background: var(--hui-surface); color: var(--hui-muted); font-size: 13px; }
+#systemConfigView .wm-notice,
+#repositoriesView .wm-notice { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-surface); color: var(--hui-secondary); }
+#systemConfigView .wm-notice.is-error,
+#repositoriesView .wm-notice.is-error { border-color: color-mix(in srgb, var(--hui-error) 30%, var(--hui-border)); color: var(--hui-error); }
+#systemConfigView .wm-notice b,
+#repositoriesView .wm-notice b { display: block; color: var(--hui-text); font: 500 13px/1.4 var(--hui-sans); }
+#systemConfigView .wm-notice p,
+#repositoriesView .wm-notice p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; }
+#systemConfigView .wm-status-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(130px, .8fr) minmax(118px, .7fr) auto; gap: 10px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--hui-border-soft); }
+#systemConfigView .wm-awaiting .hui-switch { align-self: end; margin-bottom: 8px; }
+#systemConfigView .wm-status-row:last-of-type { border-bottom: 0; }
+#systemConfigView .wm-remove { align-self: end; margin-bottom: 1px; color: var(--hui-error); border-color: color-mix(in srgb, var(--hui-error) 26%, var(--hui-border)); }
+
+/* ---------- 代码仓库 ---------- */
+#repositoriesView .repo-config-summary { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid var(--hui-border); border-radius: 13px; background: var(--hui-surface); }
+#repositoriesView .repo-config-summary div { display: grid; gap: 2px; }
+#repositoriesView .repo-config-summary b { font: 600 14px/1.3 var(--hui-sans); color: var(--hui-text); }
+#repositoriesView .repo-config-summary span { font-size: 12.5px; color: var(--hui-muted); }
+#repositoriesView .repo-config-list { display: grid; gap: 16px; }
+#repositoriesView .repo-config-title { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+#repositoriesView .repo-config-title h2 { overflow-wrap: anywhere; }
+#repositoriesView .repo-config-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+#repositoriesView .repo-address { padding: 8px 10px; border: 1px solid var(--hui-border-soft); border-radius: 8px; background: var(--hui-canvas); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#repositoriesView .repo-credential-block { border-top: 1px solid var(--hui-border-soft); padding: 14px 18px 18px; display: grid; gap: 12px; }
+#repositoriesView .repo-credential-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+#repositoriesView .repo-credential-head b { font: 600 13px/1.3 var(--hui-sans); color: var(--hui-text); }
+#repositoriesView .repo-credential-head span { font-size: 12px; color: var(--hui-muted); }
+#repositoriesView .repo-credential-list { display: grid; gap: 8px; }
+#repositoriesView .repo-credential-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 10px; border: 1px solid var(--hui-border-soft); border-radius: 9px; background: var(--hui-canvas); }
+#repositoriesView .repo-credential-row div { display: grid; gap: 2px; min-width: 0; }
+#repositoriesView .repo-credential-row b { font: 500 13px/1.35 var(--hui-sans); color: var(--hui-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#repositoriesView .repo-credential-row small { font-size: 12px; color: var(--hui-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#repositoriesView .repo-credential-form { padding: 12px; border: 1px dashed var(--hui-border-strong); border-radius: 10px; background: var(--hui-canvas); }
+#repositoriesView .repo-credential-form .wm-field input,
+#repositoriesView .repo-credential-form .wm-field select { background: var(--hui-surface); }
+
+.is-dark #systemConfigView .wm-panel,
+.is-dark #repositoriesView .wm-panel,
+html[data-theme="dark"] #systemConfigView .wm-panel,
+html[data-theme="dark"] #repositoriesView .wm-panel { box-shadow: none; }
+
+@media (max-width: 900px) {
+  #systemConfigView .wm-row,
+  #repositoriesView .wm-row { grid-template-columns: 1fr; }
+  #systemConfigView .wm-status-row { grid-template-columns: 1fr 1fr; }
+  #repositoriesView .repo-config-card .wm-panel-head { flex-direction: column; }
+  #repositoriesView .repo-config-badges { justify-content: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #issuesView .issue-table-body > .issue-table-row,
+  #systemConfigView .wm-field input,
+  #systemConfigView .wm-field select,
+  #repositoriesView .wm-field input,
+  #repositoriesView .wm-field select { transition: none; }
+}

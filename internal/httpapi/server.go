@@ -31,6 +31,7 @@ import (
 	"agentflow/internal/runtime"
 	"agentflow/internal/schedule"
 	"agentflow/internal/tracker"
+	"agentflow/internal/workmanagement"
 	webassets "agentflow/web"
 
 	"github.com/gin-gonic/gin"
@@ -80,7 +81,9 @@ type Server struct {
 	credentials     *projectCredentialsHandlers
 	insights        *insightsHandlers
 	businessDomains *businessDomainsHandlers
-	catalog         *catalogHandlers  // catalog.go
+	catalog         *catalogHandlers // catalog.go
+	repoCredentials *repositoryCredentialsHandlers
+	deliveries      *deliveriesHandlers
 	mcp             *mcpHandlers      // mcp.go
 	market          *marketHandlers   // mcp_market.go
 	skillhub        *skillhubHandlers // skillhub_market.go
@@ -97,7 +100,8 @@ type Server struct {
 	notifications   *notificationHandlers
 	botInteractions *botInteractionHandlers
 	botIdentities   *botIdentityHandlers
-	know            *knowledgeHandlers // knowledge.go / knowledge_proxy.go
+	workManagement  *workManagementHandlers // work_management.go
+	know            *knowledgeHandlers      // knowledge.go / knowledge_proxy.go
 }
 
 func New(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string) *gin.Engine {
@@ -123,11 +127,14 @@ func NewWithNotificationsAndBackground(ctx context.Context, s *repo.Store, e *en
 	router := newWithNotifications(s, e, syncSvc, basicUser, basicPass, notifications, bg, func(h *assistantHandlers, runs *runsHandlers) {
 		h.startSessionJanitor(ctx)
 		h.startAttachmentSweeper(ctx)
+	}, func(server *Server) {
+		// Event intake and reconciliation share the API process lifetime.
+		server.workManagement.service.Start(ctx)
 	})
 	return router, bg
 }
 
-func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers)) *gin.Engine {
+func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Service, basicUser, basicPass string, notifications *notification.Service, bg *Background, startBackground func(*assistantHandlers, *runsHandlers), onReady ...func(*Server)) *gin.Engine {
 	d := &deps{repo: s, engine: e, sync: syncSvc, authClient: auth.NewClientFromEnv(), passwordAttempts: newPasswordLimiter()}
 	if trustGatewayIdentityHeaders() && strings.TrimSpace(os.Getenv("AGENTFLOW_IDENTITY_HEADER_SECRET")) == "" {
 		log.Printf("warning: AGENTFLOW_TRUST_IDENTITY_HEADERS is on without AGENTFLOW_IDENTITY_HEADER_SECRET; any loopback caller without forwarding headers, including a proxy that passes client headers through, can sign in as any user")
@@ -154,6 +161,15 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	e.WorkspaceCheckpointTransport = func(ctx context.Context, run domain.Run, request domain.RunnerWorkspaceRequest) (domain.RunnerWorkspaceResponse, error) {
 		return runnerControls.requestWorkspace(ctx, e.RunExecutionRunner(run), request)
 	}
+	wmAdapter := newFeishuWorkManagementAdapter(s)
+	// External status entries reuse the existing Issue dispatch chain; the
+	// execution adapter only maps them onto Task/Run control.
+	wmExecution := &workManagementExecution{deps: d}
+	wmService := workmanagement.NewService(wmAdapter, s, workmanagement.ServiceOptions{Execution: wmExecution})
+	// Delivery evidence is produced by the engine; the hook only enqueues the
+	// external summary writeback into the Work Management outbox. It never
+	// blocks or fails the Run.
+	e.OnDeliveryRecorded = wmService.QueueDeliveryWriteback
 	api := &Server{
 		deps:            d,
 		notifications:   &notificationHandlers{deps: d, service: notifications},
@@ -165,6 +181,8 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		platformSetting: &platformSettingsHandlers{deps: d, envPublicURL: func() string { return notifications.PublicURL }},
 		httpHostTrust:   &gitHTTPHostTrustHandlers{deps: d, hosts: s.GitHTTPHostTrustRepo},
 		catalog:         &catalogHandlers{deps: d},
+		repoCredentials: &repositoryCredentialsHandlers{deps: d},
+		deliveries:      &deliveriesHandlers{deps: d},
 		businessDomains: &businessDomainsHandlers{deps: d},
 		insights:        &insightsHandlers{deps: d},
 		projects:        &projectsHandlers{deps: d},
@@ -183,6 +201,12 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 		tokens:          &tokenHandlers{deps: d},
 		syncAPI:         &syncHandlers{deps: d},
 		know:            &knowledgeHandlers{deps: d, svc: knowledge.NewService(d.repo, randomID), activity: &knowledgeActivityLog{}},
+		workManagement:  &workManagementHandlers{deps: d, adapter: wmAdapter, service: wmService},
+	}
+	// Bitable record change events arrive on the same Feishu long connection
+	// the notification Bot already uses; the handler only writes the inbox.
+	if notifications != nil && notifications.Interactions != nil {
+		notifications.Interactions.SetFeishuEventRegistrar(wmService.RegisterFeishuEvents)
 	}
 	e.WorkspaceActive = func(run domain.Run) bool { return api.runs.terminals.HasRunScope(run.ID) }
 	api.catalog.notifications = api.notifications
@@ -424,6 +448,11 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.PUT("/api/repositories", api.catalog.repositories)
 	g.DELETE("/api/repositories", api.catalog.repositories)
 	g.GET("/api/repositories/:id", api.catalog.repository)
+	g.GET("/api/repositories/:id/git-credentials", api.repoCredentials.credentials)
+	g.PUT("/api/repositories/:id/git-credentials", api.repoCredentials.credentials)
+	g.DELETE("/api/repositories/:id/git-credentials/:credId", api.repoCredentials.credentials)
+	g.GET("/api/deliveries", api.deliveries.deliveries)
+	g.GET("/api/deliveries/:id", api.deliveries.delivery)
 	g.GET("/api/issues", api.issues.issues)
 	g.PUT("/api/issues", api.issues.issues)
 	g.POST("/api/issues", api.issues.issues)
@@ -639,6 +668,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	g.GET("/api/schedule-job-executions", api.schedule.scheduleJobExecutions)
 	g.GET("/api/schedule-job-executions/dashboard", api.schedule.scheduleJobExecutionDashboard)
 
+	// --- work management (external work items) ---
+	api.workManagement.register(g)
+
 	// --- runner management plane ---
 	g.GET("/api/runners", api.runners.runners)
 	g.POST("/api/runners/register", api.runners.runnerRegister)
@@ -732,6 +764,9 @@ func newWithNotifications(s *repo.Store, e *engine.Engine, syncSvc *tracker.Serv
 	})
 	if startBackground != nil {
 		startBackground(asst, api.runs)
+	}
+	for _, ready := range onReady {
+		ready(api)
 	}
 	return g
 }

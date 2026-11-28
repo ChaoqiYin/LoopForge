@@ -1,12 +1,12 @@
 package httpapi
 
 import (
-	"agentflow/internal/botinteraction"
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"agentflow/internal/tracker"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -55,8 +55,8 @@ func confirmModeFixtureFor(t *testing.T, channel string) (*repo.Store, *assistan
 			t.Fatalf("exec mode = %+v", session.ExecMode)
 		}
 		title++
-		body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "网页确认的需求" + strings.Repeat("!", title)})
-		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "我会创建这个需求。", Drafts: []assistantDraft{{Tool: "issues_save", Body: body}}}})
+		body, _ := json.Marshal(map[string]any{"id": fmt.Sprintf("bot-draft-agent-%d", title), "name": "网页确认的角色" + strings.Repeat("!", title), "projectId": "p"})
+		session.commitFinal(AgentTerminalResult{Kind: AgentTerminalAssistant, Assistant: &assistantReply{Message: "我会保存这个角色。", Drafts: []assistantDraft{{Tool: "agents_save", Body: body}}}})
 		return "", nil
 	}
 	ask := func() string {
@@ -81,7 +81,7 @@ func TestPlainTextChannelsConfirmWritesOnThePlatformPage(t *testing.T) {
 		t.Run(channel, func(t *testing.T) {
 			s, h, _, ask, last := confirmModeFixtureFor(t, channel)
 			member, _ := s.User(43)
-			before := len(s.Issues())
+			before := len(s.Agents())
 			id := ask()
 			if strings.ContainsAny(*last, "[]()") {
 				t.Fatalf("markdown in plain-text reply: %q", *last)
@@ -90,14 +90,14 @@ func TestPlainTextChannelsConfirmWritesOnThePlatformPage(t *testing.T) {
 			if lines[len(lines)-1] != "http://platform.example/bot-approve.html#draft="+id {
 				t.Fatalf("link not alone on the last line: %q", *last)
 			}
-			if len(s.Issues()) != before {
+			if len(s.Agents()) != before {
 				t.Fatal("draft executed before confirmation")
 			}
 			code, done := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true)
-			if code != 200 || done["status"] != repo.BotDraftExecuted || len(s.Issues()) != before+1 {
-				t.Fatalf("confirm = %d %v issues=%d", code, done, len(s.Issues()))
+			if code != 200 || done["status"] != repo.BotDraftExecuted || len(s.Agents()) != before+1 {
+				t.Fatalf("confirm = %d %v agents=%d", code, done, len(s.Agents()))
 			}
-			if _, again := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true); again["status"] != repo.BotDraftExecuted || len(s.Issues()) != before+1 {
+			if _, again := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true); again["status"] != repo.BotDraftExecuted || len(s.Agents()) != before+1 {
 				t.Fatalf("repeat = %v", again)
 			}
 		})
@@ -126,16 +126,16 @@ func TestWeComConfirmModeExecutesConfirmedDraftOnce(t *testing.T) {
 	s, h, _, ask := confirmModeFixture(t)
 	member, _ := s.User(43)
 	owner, _ := s.User(42)
-	before := len(s.Issues())
+	before := len(s.Agents())
 	id := ask()
-	if len(s.Issues()) != before {
+	if len(s.Agents()) != before {
 		t.Fatal("draft executed before confirmation")
 	}
 	if code, _ := draftCall(t, h, owner, "GET", "/api/bot-drafts/"+id, false); code != 404 {
 		t.Fatalf("other user can read the draft: %d", code)
 	}
 	code, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	if code != 200 || view["status"] != repo.BotDraftPending || len(view["operations"].([]any)) != 1 || !strings.HasPrefix(view["operations"].([]any)[0].(string), "1. 保存需求：网页确认的需求!（SOP：") {
+	if code != 200 || view["status"] != repo.BotDraftPending || len(view["operations"].([]any)) != 1 || !strings.HasPrefix(view["operations"].([]any)[0].(string), "1. 保存角色：网页确认的角色") {
 		t.Fatalf("view = %d %v", code, view)
 	}
 	if _, ok := view["drafts"]; ok {
@@ -151,20 +151,20 @@ func TestWeComConfirmModeExecutesConfirmedDraftOnce(t *testing.T) {
 	if code != 200 || done["status"] != repo.BotDraftExecuted {
 		t.Fatalf("confirm = %d %v", code, done)
 	}
-	if len(s.Issues()) != before+1 {
-		t.Fatalf("issues = %d, want %d", len(s.Issues()), before+1)
+	if len(s.Agents()) != before+1 {
+		t.Fatalf("agents = %d, want %d", len(s.Agents()), before+1)
 	}
 	// A repeated click returns the current state and writes nothing.
 	code, again := draftCall(t, h, member, "POST", "/api/bot-drafts/"+id+"/confirm", true)
-	if code != 200 || again["status"] != repo.BotDraftExecuted || len(s.Issues()) != before+1 {
-		t.Fatalf("repeat = %d %v issues=%d", code, again, len(s.Issues()))
+	if code != 200 || again["status"] != repo.BotDraftExecuted || len(s.Agents()) != before+1 {
+		t.Fatalf("repeat = %d %v agents=%d", code, again, len(s.Agents()))
 	}
 	// Cancel by the user.
 	second := ask()
 	if _, out := draftCall(t, h, member, "POST", "/api/bot-drafts/"+second+"/cancel", true); out["status"] != repo.BotDraftCancelled {
 		t.Fatalf("cancel = %v", out)
 	}
-	if _, out := draftCall(t, h, member, "POST", "/api/bot-drafts/"+second+"/confirm", true); out["status"] != repo.BotDraftCancelled || len(s.Issues()) != before+1 {
+	if _, out := draftCall(t, h, member, "POST", "/api/bot-drafts/"+second+"/confirm", true); out["status"] != repo.BotDraftCancelled || len(s.Agents()) != before+1 {
 		t.Fatalf("confirm after cancel = %v", out)
 	}
 }
@@ -172,7 +172,7 @@ func TestWeComConfirmModeExecutesConfirmedDraftOnce(t *testing.T) {
 func TestWeComConfirmDraftsInvalidatedByRevocationAndModeChange(t *testing.T) {
 	s, h, bot, ask := confirmModeFixture(t)
 	member, _ := s.User(43)
-	before := len(s.Issues())
+	before := len(s.Agents())
 	// Losing project permission invalidates at confirmation.
 	id := ask()
 	project, _ := s.Project("p")
@@ -215,7 +215,7 @@ func TestWeComConfirmDraftsInvalidatedByRevocationAndModeChange(t *testing.T) {
 	if _, out := draftCall(t, h, member, "GET", "/api/bot-drafts/"+m[1], false); out["status"] != repo.BotDraftCancelled {
 		t.Fatalf("after mode change = %v", out)
 	}
-	if len(s.Issues()) != before {
+	if len(s.Agents()) != before {
 		t.Fatal("an invalidated draft was executed")
 	}
 }
@@ -281,334 +281,3 @@ var _ = http.MethodGet
 
 // New requirements from chat show their SOP; the confirmation page can
 // switch to another SOP of the project and start it right away.
-func TestBotDraftChoosesSOPAndStartsIt(t *testing.T) {
-	s, h, _, ask, last := confirmModeFixtureFor(t, domain.BotChannelFeishu)
-	member, _ := s.User(43)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}},
-		{ID: "wf-fix", Name: "缺陷修复", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "修复", Type: "agent", AgentID: "dev-agent"}}},
-		{ID: "wf-other", Name: "别的项目", ProjectID: "q", Status: "published"},
-	} {
-		if err := s.PutWorkflow(wf); err != nil {
-			t.Fatal(err)
-		}
-	}
-	project, _ := s.Project("p")
-	project.WorkflowID = "wf-dev"
-	s.PutProject(project)
-	id := ask()
-	if !strings.Contains(*last, "（SOP：项目默认 · 研发交付）") || !strings.Contains(*last, "确认页可以更换仓库和 SOP") {
-		t.Fatalf("summary without SOP: %q", *last)
-	}
-	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	issues, _ := view["newIssues"].([]any)
-	if len(issues) != 1 || issues[0].(map[string]any)["workflowId"] != "" || issues[0].(map[string]any)["defaultWorkflowId"] != "wf-dev" || issues[0].(map[string]any)["defaultWorkflowName"] != "研发交付" {
-		t.Fatalf("new issues = %v", view["newIssues"])
-	}
-	names := []string{}
-	for _, wf := range view["workflows"].([]any) {
-		names = append(names, wf.(map[string]any)["id"].(string))
-	}
-	if strings.Contains(strings.Join(names, ","), "wf-other") || !strings.Contains(strings.Join(names, ","), "wf-fix") {
-		t.Fatalf("workflows offered = %v", names)
-	}
-	// A foreign SOP is refused and nothing is created.
-	before := len(s.Issues())
-	other := ask()
-	if _, out := draftChoice(t, h, member, other, `{"choices":[{"index":0,"workflowId":"wf-other","start":true}]}`); out["status"] != repo.BotDraftFailed || len(s.Issues()) != before {
-		t.Fatalf("foreign SOP = %v", out)
-	}
-	code, out := draftChoice(t, h, member, id, `{"choices":[{"index":0,"workflowId":"wf-fix","start":true}]}`)
-	if code != 200 {
-		t.Fatalf("confirm = %d %v", code, out)
-	}
-	var created domain.Issue
-	for _, issue := range s.Issues() {
-		if strings.HasPrefix(issue.Title, "网页确认的需求") && issue.WorkflowID == "wf-fix" {
-			created = issue
-		}
-	}
-	if created.ID == "" {
-		t.Fatalf("issue not bound to the chosen SOP: %v", out)
-	}
-	results := strings.Join(toStrings(out["results"]), "\n")
-	if !strings.Contains(results, "已完成：保存需求：网页确认的需求") || !strings.Contains(results, "缺陷修复") {
-		t.Fatalf("results = %q", results)
-	}
-	started := false
-	for _, task := range s.Tasks() {
-		if task.IssueID == created.ID && task.WorkflowID == "wf-fix" {
-			started = true
-		}
-	}
-	if !started || !strings.Contains(results, "已启动：缺陷修复") {
-		t.Fatalf("SOP not started: %q", results)
-	}
-}
-
-func draftChoice(t *testing.T, h *assistantHandlers, user domain.User, id, body string) (int, map[string]any) {
-	t.Helper()
-	req := httptest.NewRequest("POST", "/api/bot-drafts/"+id+"/confirm", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req = authedRequest(t, req, user)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-	c.Params = gin.Params{{Key: "id", Value: id}}
-	h.botDraft(c)
-	out := map[string]any{}
-	json.Unmarshal(w.Body.Bytes(), &out)
-	return w.Code, out
-}
-
-func toStrings(v any) []string {
-	list, _ := v.([]any)
-	out := make([]string, 0, len(list))
-	for _, item := range list {
-		s, _ := item.(string)
-		out = append(out, s)
-	}
-	return out
-}
-
-// The Feishu confirmation card: "确认并启动 SOP" creates the requirement and
-// starts its SOP once; other people's clicks and later clicks do nothing;
-// "取消" cancels.
-func TestFeishuDraftCardButtons(t *testing.T) {
-	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutWorkflow(domain.WorkflowDefinition{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}}); err != nil {
-		t.Fatal(err)
-	}
-	project, _ := s.Project("p")
-	project.WorkflowID = "wf-dev"
-	s.PutProject(project)
-	bindBotTestUser(t, s, bot, "ou-stranger", 42)
-	click := func(sender, action, id string) string {
-		t.Helper()
-		reply, err := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: sender, Action: action, DeliveryID: id}, domain.BotConversation{ChatID: sender, ChatType: "single"})
-		if err != nil {
-			t.Fatal(reply, err)
-		}
-		return reply
-	}
-	before := len(s.Issues())
-	id := ask()
-	if reply := click("ou-stranger", botinteraction.DraftActionConfirm, id); !strings.Contains(reply, "不是你发起的") || len(s.Issues()) != before {
-		t.Fatalf("stranger = %q", reply)
-	}
-	reply := click("new-wecom-user", botinteraction.DraftActionConfirmStart, id)
-	if !strings.Contains(reply, "操作已执行") || !strings.Contains(reply, "已启动：研发交付") || len(s.Issues()) != before+1 {
-		t.Fatalf("confirm and start = %q", reply)
-	}
-	started := 0
-	for _, task := range s.Tasks() {
-		if task.WorkflowID == "wf-dev" {
-			started++
-		}
-	}
-	if started != 1 {
-		t.Fatalf("tasks = %d", started)
-	}
-	if again := click("new-wecom-user", botinteraction.DraftActionConfirm, id); !strings.Contains(again, "操作已执行") || len(s.Issues()) != before+1 {
-		t.Fatalf("repeat = %q", again)
-	}
-	second := ask()
-	if reply := click("new-wecom-user", botinteraction.DraftActionCancel, second); !strings.Contains(reply, "已取消") {
-		t.Fatalf("cancel = %q", reply)
-	}
-	if reply := click("new-wecom-user", botinteraction.DraftActionConfirm, second); !strings.Contains(reply, "已取消") || len(s.Issues()) != before+1 {
-		t.Fatalf("confirm after cancel = %q", reply)
-	}
-}
-
-// The model named an SOP; the user switches back to the project default on
-// the page, so the requirement is saved without workflowId and gets the
-// project default. Generic templates are offered too.
-func TestBotDraftDefaultSOPOption(t *testing.T) {
-	s, h, _, _, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
-	member, _ := s.User(43)
-	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published"},
-		{ID: "wf-fix", Name: "缺陷修复", ProjectID: "p", Status: "draft"},
-	} {
-		if err := s.PutWorkflow(wf); err != nil {
-			t.Fatal(err)
-		}
-	}
-	project, _ := s.Project("p")
-	project.WorkflowID = "wf-dev"
-	s.PutProject(project)
-	body, _ := json.Marshal(map[string]any{"projectId": "p", "title": "点名 SOP 的需求", "workflowId": "wf-fix"})
-	raw, _ := json.Marshal([]assistantDraft{{Tool: "issues_save", Body: body}})
-	draft, err := s.CreateBotPendingDraft(domain.BotPendingDraft{ConfigID: "b-feishu", ProjectID: "p", UserID: 43, SenderID: "new-wecom-user", Summary: "1. 保存需求：点名 SOP 的需求（SOP：缺陷修复）", Drafts: string(raw)}, time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+draft.ID, false)
-	issue := view["newIssues"].([]any)[0].(map[string]any)
-	if issue["workflowId"] != "wf-fix" || issue["defaultWorkflowName"] != "研发交付" {
-		t.Fatalf("issue = %v", issue)
-	}
-	ids := []string{}
-	for _, wf := range view["workflows"].([]any) {
-		ids = append(ids, wf.(map[string]any)["id"].(string))
-	}
-	if !strings.Contains(strings.Join(ids, ","), "wf-fix") {
-		t.Fatalf("draft SOP not offered: %v", ids)
-	}
-	if code, out := draftChoice(t, h, member, draft.ID, `{"choices":[{"index":0,"workflowId":""}]}`); code != 200 || out["status"] != repo.BotDraftExecuted {
-		t.Fatalf("confirm default = %d %v", code, out)
-	}
-	for _, issue := range s.Issues() {
-		if issue.Title == "点名 SOP 的需求" {
-			if issue.WorkflowID != "wf-dev" {
-				t.Fatalf("bound to %q, want the project default", issue.WorkflowID)
-			}
-			return
-		}
-	}
-	t.Fatal("requirement not created")
-}
-
-// The SOP picked on the chat card is offered from the project's SOPs, used
-// by the card's confirm button and preselected on the platform page.
-func TestFeishuDraftCardUsesPickedSOP(t *testing.T) {
-	s, h, bot, ask, _ := confirmModeFixtureFor(t, domain.BotChannelFeishu)
-	member, _ := s.User(43)
-	if err := s.PutAgent(domain.AgentDefinition{ID: "dev-agent", Name: "开发"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, wf := range []domain.WorkflowDefinition{
-		{ID: "wf-dev", Name: "研发交付", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "开发", Type: "agent", AgentID: "dev-agent"}}},
-		{ID: "wf-fix", Name: "缺陷修复", ProjectID: "p", Status: "published", Nodes: []domain.WorkflowNode{{ID: "n1", Name: "修复", Type: "agent", AgentID: "dev-agent"}}},
-	} {
-		if err := s.PutWorkflow(wf); err != nil {
-			t.Fatal(err)
-		}
-	}
-	project, _ := s.Project("p")
-	project.WorkflowID = "wf-dev"
-	s.PutProject(project)
-	id := ask()
-	draft, _ := s.BotPendingDraft(id, time.Now().UTC())
-	if draft.SOP == nil || draft.SOP.DefaultName != "研发交付" || !draft.SOP.Allows("wf-fix") || draft.SOP.Allows("wf-other") {
-		t.Fatalf("sop options = %+v", draft.SOP)
-	}
-	if _, err := s.SetBotPendingDraftChoice(id, bot.ID, "new-wecom-user", "wf-fix", time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	if issue := view["newIssues"].([]any)[0].(map[string]any); issue["workflowId"] != "wf-fix" {
-		t.Fatalf("page does not start from the card pick: %v", issue)
-	}
-	reply, err := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: "new-wecom-user", Action: botinteraction.DraftActionConfirmStart, DeliveryID: id}, domain.BotConversation{})
-	if err != nil || !strings.Contains(reply, "已启动：缺陷修复") {
-		t.Fatalf("confirm = %q %v", reply, err)
-	}
-	for _, issue := range s.Issues() {
-		if strings.HasPrefix(issue.Title, "网页确认的需求") && issue.WorkflowID != "wf-fix" {
-			t.Fatalf("bound to %s", issue.WorkflowID)
-		}
-	}
-}
-
-// The repository of a requirement created from chat: the summary names it
-// (the project default when nobody named one), the card and the page offer
-// the project's repositories, and the pick binds the requirement.
-func TestBotDraftChoosesRepository(t *testing.T) {
-	s, h, bot, ask, last := confirmModeFixtureFor(t, domain.BotChannelFeishu)
-	member, _ := s.User(43)
-	s.PutProject(domain.Project{ID: "q", OwnerID: 42})
-	for _, r := range []domain.Repository{
-		{ID: "repo-main", ProjectID: "p", Name: "lf-loop-sandbox", DefaultBranch: "main"},
-		{ID: "repo-web", ProjectID: "p", Name: "web-console", DefaultBranch: "main"},
-		{ID: "repo-other", ProjectID: "q", Name: "其他项目仓库", DefaultBranch: "main"},
-	} {
-		if err := s.PutRepository(r); err != nil {
-			t.Fatal(err)
-		}
-	}
-	project, _ := s.Project("p")
-	project.DefaultRepositoryID = "repo-main"
-	s.PutProject(project)
-	created := func(prefix string) domain.Issue {
-		for _, issue := range s.Issues() {
-			if issue.Title == prefix {
-				return issue
-			}
-		}
-		return domain.Issue{}
-	}
-
-	// Page: the default is preselected and another repository is chosen.
-	id := ask()
-	if !strings.Contains(*last, "（仓库：项目默认 · lf-loop-sandbox）") {
-		t.Fatalf("summary without repository: %q", *last)
-	}
-	_, view := draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	issue := view["newIssues"].([]any)[0].(map[string]any)
-	if issue["repositoryId"] != "" || issue["defaultRepositoryName"] != "lf-loop-sandbox" {
-		t.Fatalf("new issue = %v", issue)
-	}
-	repos := []string{}
-	for _, r := range view["repositories"].([]any) {
-		repos = append(repos, r.(map[string]any)["name"].(string))
-	}
-	if strings.Join(repos, ",") != "lf-loop-sandbox,web-console" {
-		t.Fatalf("repositories = %v", repos)
-	}
-	if _, out := draftChoice(t, h, member, id, `{"choices":[{"index":0,"workflowId":"","repositoryId":"repo-web"}]}`); out["status"] != repo.BotDraftExecuted || !strings.Contains(strings.Join(toStrings(out["results"]), "\n"), "（仓库：web-console）") {
-		t.Fatalf("confirm = %v", out)
-	}
-	if got := created("网页确认的需求!"); got.RepositoryID != "repo-web" || len(got.RepositoryIDs) != 1 {
-		t.Fatalf("bound to %q %v", got.RepositoryID, got.RepositoryIDs)
-	}
-	// Another project's repository is refused.
-	other := ask()
-	if _, out := draftChoice(t, h, member, other, `{"choices":[{"index":0,"workflowId":"","repositoryId":"repo-other"}]}`); out["status"] != repo.BotDraftFailed || created("网页确认的需求!!").ID != "" {
-		t.Fatalf("foreign repository = %v", out)
-	}
-
-	// Card: a repository drop-down before the SOP; the pick is stored,
-	// foreign repositories are refused, and confirming binds it.
-	id = ask()
-	draft, _ := s.BotPendingDraft(id, time.Now().UTC())
-	if draft.SOP == nil || draft.SOP.DefaultRepositoryName != "lf-loop-sandbox" || !draft.SOP.AllowsRepository("repo-web") || draft.SOP.AllowsRepository("repo-other") {
-		t.Fatalf("repository options = %+v", draft.SOP)
-	}
-	if _, err := s.SetBotPendingDraftRepository(id, bot.ID, "new-wecom-user", "repo-other", time.Now().UTC()); err != repo.ErrBotDraftNotPending {
-		t.Fatalf("foreign pick = %v", err)
-	}
-	if _, err := s.SetBotPendingDraftRepository(id, bot.ID, "someone-else", "repo-web", time.Now().UTC()); err != repo.ErrBotDraftNotPending {
-		t.Fatalf("other sender = %v", err)
-	}
-	if _, err := s.SetBotPendingDraftRepository(id, bot.ID, "new-wecom-user", "repo-web", time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	_, view = draftCall(t, h, member, "GET", "/api/bot-drafts/"+id, false)
-	if issue := view["newIssues"].([]any)[0].(map[string]any); issue["repositoryId"] != "repo-web" || issue["workflowId"] != "" {
-		t.Fatalf("page does not start from the card pick: %v", issue)
-	}
-	reply, err := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: "new-wecom-user", Action: botinteraction.DraftActionConfirm, DeliveryID: id}, domain.BotConversation{})
-	if err != nil || !strings.Contains(reply, "（仓库：web-console）") {
-		t.Fatalf("confirm = %q %v", reply, err)
-	}
-	if got := created("网页确认的需求!!!"); got.RepositoryID != "repo-web" {
-		t.Fatalf("card pick not applied: %q", got.RepositoryID)
-	}
-	// Choosing the default again keeps the project default repository.
-	id = ask()
-	s.SetBotPendingDraftRepository(id, bot.ID, "new-wecom-user", domain.BotDraftDefaultSOP, time.Now().UTC())
-	if reply, _ := h.handleBotCardAction(context.Background(), bot, domain.BotInteraction{SenderID: "new-wecom-user", Action: botinteraction.DraftActionConfirm, DeliveryID: id}, domain.BotConversation{}); !strings.Contains(reply, "（仓库：项目默认 · lf-loop-sandbox）") {
-		t.Fatalf("default = %q", reply)
-	}
-	if got := created("网页确认的需求!!!!"); got.RepositoryID != "repo-main" {
-		t.Fatalf("default repository = %q", got.RepositoryID)
-	}
-}

@@ -38,9 +38,18 @@ func TestSpaceFeaturesLifecycleAndAuthorization(t *testing.T) {
 	if err := f.s.PutProject(foreign); err != nil {
 		t.Fatal(err)
 	}
-	issue := domain.Issue{ID: "cvb-space-existing-issue", ProjectID: project.ID, Title: "Existing", Status: "todo", Priority: "high", Kind: "issue", Source: "local"}
+	issue := domain.Issue{
+		ID: "cvb-space-existing-issue", ProjectID: project.ID, Title: "Existing", Status: "todo", Priority: "high", Kind: "issue", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-space-existing", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-space-existing"},
+	}
 	foreignIssue := domain.Issue{ID: "cvb-space-foreign-issue", ProjectID: foreign.ID, Title: "Foreign", Status: "todo", Priority: "low", Kind: "issue", Source: "local"}
 	if err := f.s.PutIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PutIssue(domain.Issue{
+		ID: "cvb-space-second-issue", ProjectID: project.ID, Title: "Second", Status: "todo", Kind: "issue", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-space-second", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-space-second"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.PutIssue(foreignIssue); err != nil {
@@ -128,7 +137,7 @@ func TestSpaceFeaturesLifecycleAndAuthorization(t *testing.T) {
 	if rec := cvBMiscRequestAs(t, f, owner, http.MethodPost, secondBase+"/requirement", "{"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed requirement = %d: %s", rec.Code, rec.Body.String())
 	}
-	reqRec := cvBMiscRequestAs(t, f, owner, http.MethodPost, secondBase+"/requirement", map[string]any{"title": " New requirement ", "description": " work "})
+	reqRec := cvBMiscRequestAs(t, f, owner, http.MethodPost, secondBase+"/requirement", map[string]any{"issueId": "cvb-space-second-issue"})
 	if reqRec.Code != http.StatusCreated {
 		t.Fatalf("create requirement = %d: %s", reqRec.Code, reqRec.Body.String())
 	}
@@ -373,9 +382,6 @@ func TestSpaceFeaturesArtifactsRawAndPublishing(t *testing.T) {
 	}
 	if _, err := closedSpaces.post(room, domain.ChatMessage{Kind: domain.ChatKindText, Body: "x"}); err == nil {
 		t.Error("post on closed store succeeded")
-	}
-	if _, err := closedSpaces.createIssue(room, "title", "description", "medium", 0, "actor"); err == nil {
-		t.Error("createIssue on closed store succeeded")
 	}
 	c, rec := cvBMiscContext(http.MethodPost, "/direct")
 	closedSpaces.writeArtifact(c, room, domain.SpaceArtifact{ID: "closed-art", SpaceID: room.ID},

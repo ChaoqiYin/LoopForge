@@ -473,7 +473,7 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.match(app.document.querySelector('#aiScheduleJobList').textContent, /Existing AI job/);
   assert.doesNotMatch(app.document.querySelector('#aiScheduleJobList').textContent, /Existing trigger|Other AI job/);
   assert.equal(app.document.querySelector('#scheduleJobCount').textContent, '已启用');
-  assert.equal(app.document.querySelector('#issueHeadingMenu #newScheduleJob'), null, 'SOP 触发 moved out of the issue list menu');
+  assert.equal(app.document.querySelector('#issueHeadingMenu'), null, '执行中心不再提供需求菜单');
   app.document.querySelector('#aiScheduleTriggerTab').click();
   await settle(2);
   assert.equal(app.document.querySelector('#aiScheduleTriggerPanel').hidden, false);
@@ -510,8 +510,8 @@ test('AI schedule navigation separates existing tasks and preserves editor kind 
   assert.equal(app.document.querySelector('#scheduleJobList').hidden, false);
   assert.equal(app.document.querySelector('#scheduleModalTitle').textContent, '触发配置');
   assert.equal(app.document.querySelector('#scheduleKindTabs'), null);
-  assert.ok(app.document.querySelector('#issueHeadingMenu #importTAPDIssue[data-legacy-tracker][hidden]'));
-  assert.equal(app.document.querySelectorAll('#importTAPDIssue').length, 1);
+  assert.equal(app.document.querySelector('#importTAPDIssue'), null, 'TAPD 导入入口随本地需求管理一起移除');
+  assert.equal(app.document.querySelector('#newIssue'), null);
 
   app.evaluate("state.data.projects.push({id:'other-project',name:'Other',key:'OTHER'});renderProjectSwitcher()");
   chooseOption(app.document.querySelector('#projectSwitcher'), 'other-project');

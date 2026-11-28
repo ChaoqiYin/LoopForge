@@ -189,7 +189,7 @@ func TestSOPDesignerCatalogIsReadOnlyAndDraftOnly(t *testing.T) {
 			t.Fatalf("designer called a tool outside its catalog: %s", call)
 		}
 	}
-	result, err := gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"建需求","drafts":[{"tool":"issues_save","body":{"projectId":"workbench","title":"x"}}]}`))
+	result, err := gw.callTerminal(session, submitAssistantReplyTool, json.RawMessage(`{"message":"启动","drafts":[{"tool":"runs_start","body":{"workflowId":"x"}}]}`))
 	encoded, _ := json.Marshal(result)
 	if err != nil || result["isError"] != true || session.finished() || !strings.Contains(string(encoded), "只能提交 workflows_save") {
 		t.Fatalf("designer accepted a non-SOP draft: %v %v", result, err)

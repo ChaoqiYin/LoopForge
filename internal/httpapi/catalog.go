@@ -22,20 +22,21 @@ type catalogHandlers struct {
 }
 
 // canManageProjectRepositories mirrors project settings: only the project
-// owner or a platform administrator may change its repositories.
-func (h *catalogHandlers) canManageProjectRepositories(c *gin.Context, projectID string) bool {
+// owner or a platform administrator may change its repositories. It lives on
+// deps so repository credentials reuse the same authorization.
+func (d *deps) canManageProjectRepositories(c *gin.Context, projectID string) bool {
 	if !authRequired() {
 		return true
 	}
-	user, ok := h.requestUser(c.Request, true)
+	user, ok := d.requestUser(c.Request, true)
 	if !ok {
 		c.JSON(401, gin.H{"error": "请先登录"})
 		return false
 	}
-	if h.isPlatformAdmin(c.Request) {
+	if d.isPlatformAdmin(c.Request) {
 		return true
 	}
-	if project, ok := h.repo.Project(projectID); ok && project.OwnerID == user.ID {
+	if project, ok := d.repo.Project(projectID); ok && project.OwnerID == user.ID {
 		return true
 	}
 	c.JSON(403, gin.H{"error": "只有项目 Owner 或平台管理员可以管理项目仓库"})
@@ -60,6 +61,8 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 			respond(c, err)
 			return
 		}
+		// Service credentials belong to the repository; never leave them orphan.
+		_ = h.repo.DeleteRepositoryGitCredentialsForRepository(id)
 		// 清除引用了该仓库的项目默认仓库设置
 		for _, p := range h.repo.Projects() {
 			if p.DefaultRepositoryID == id {
@@ -77,6 +80,9 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		domain.Repository
 		RepoURL string `json:"repoUrl"`
 		URL     string `json:"url"`
+		// The explicit pointer distinguishes an omitted field (keep the stored
+		// credential reference) from an explicit empty value (detach it).
+		ServiceCredentialID *string `json:"serviceCredentialId"`
 	}
 	if !decode(c, &body) {
 		return
@@ -99,6 +105,18 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 	}
 	if !h.canManageProjectRepositories(c, v.ProjectID) {
 		return
+	}
+	if body.ServiceCredentialID != nil {
+		v.ServiceCredentialID = strings.TrimSpace(*body.ServiceCredentialID)
+	} else if exists {
+		v.ServiceCredentialID = existing.ServiceCredentialID
+	}
+	if v.ServiceCredentialID != "" {
+		credential, ok := h.repo.RepositoryGitCredential(v.ServiceCredentialID)
+		if !ok || credential.RepositoryID != v.ID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "服务凭据不存在或不属于该仓库"})
+			return
+		}
 	}
 	if v.WorkBranchNaming != nil {
 		naming, err := repo.NormalizeRepositoryWorkBranchNaming(*v.WorkBranchNaming)

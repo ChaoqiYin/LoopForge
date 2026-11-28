@@ -265,7 +265,7 @@ const RUN_FILTER_KEYS=['all','active','queued','paused','waiting','succeeded','f
 function runMatchesFilter(r,key){
   if(key==='all')return true;
   if(key==='active')return r.status==='running'&&!r.pauseRequested;
-  if(key==='paused')return Boolean(r.pauseRequested||r.status==='paused');
+  if(key==='paused')return Boolean(r.pauseRequested);
   if(key==='waiting')return runAwaitsConfirmation(r);
   return r.status===key;
 }
@@ -276,13 +276,13 @@ function hydrateRunIcons(root){
 function runIconSlot(name,size,cls=''){return `<span class="${cls}" data-run-icon="${name}" aria-hidden="true"><svg width="${size}" height="${size}"></svg></span>`}
 function runIdleCollaboration(r){return (r?.kind==='workspace'||runIsGroupMode(r))&&r?.status==='waiting'&&!r?.pauseRequested&&!runAwaitsConfirmation(r)}
 function runStatusTone(r){
-  if(r?.pauseRequested||r?.status==='paused')return 'warn';
+  if(r?.pauseRequested)return 'warn';
   if(runIdleCollaboration(r))return 'neutral';
   return ({running:'info',waiting:'warn',succeeded:'ok',failed:'err'}[r?.status])||'neutral';
 }
 const RUN_BADGE_TONES={info:'info',ok:'success',err:'error',warn:'warn',neutral:'neutral'};
 function runStatusBadgeHTML(r){
-  const paused=Boolean(r?.pauseRequested||r?.status==='paused');
+  const paused=Boolean(r?.pauseRequested);
   const [label,icon]=paused?['已暂停','pause']:runIdleCollaboration(r)?(r.kind==='workspace'?(runWorkspaceReclaimed(r)?['已回收','folder']:['工作区在线','chat']):['待指令','chat']):({queued:['排队中','clock'],running:['进行中',''],waiting:['待确认','user-hold'],succeeded:['已完成','check'],failed:['失败','alert'],cancelled:['已取消','close']}[r?.status])||[runStatus(r?.status),'circle'];
   const mark=icon?runIconSlot(icon,12,'hui-badge-glyph'):'<span class="hui-lamp" aria-hidden="true"><i></i></span>';
   return `<span class="hui-badge" data-size="sm" data-tone="${RUN_BADGE_TONES[runStatusTone(r)]}" data-status="${escapeHTML(runDisplayStatusClass(r))}" title="${escapeHTML(runDisplayStatus(r))}">${mark}${escapeHTML(label)}</span>`;
@@ -291,14 +291,15 @@ function runTriggerChip(task){const info=taskTriggerInfo(task);return `<span cla
 function runWorkspaceReclaimed(r){const at=String(r?.workspaceCleanedAt||'');return Boolean(at)&&!at.startsWith('0001-')}
 function runRowHTML(r,workflows){
   const p=runProgress(r),ctx=runContext(r),group=runIsGroupMode(r),sop=r.workflowSnapshot?.name||workflows.find(w=>w.id===r.workflowId)?.name||r.workflowId,title=ctx.issue?.title||sop||'自由协作';
-  const isPaused=Boolean(r.pauseRequested||r.status==='paused');
+  const isPaused=Boolean(r.pauseRequested);
   const isDeletable=r.status!=='queued'&&(!['running','waiting'].includes(r.status)||isPaused);
   const sep='<span class="run-sep">·</span>';
   const meta=group?`<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`:`${ctx.issue?`<span class="run-ref">${escapeHTML(ctx.project?.key||'ISS')}-${escapeHTML(ctx.issue.number)}</span>${sep}`:''}<span class="run-meta-sop">${escapeHTML(sop)}</span>${sep}<span>${relativeTime(r.createdAt)}</span>${runTriggerChip(ctx.task)}`;
   const progress=group?'<div class="run-row-progress is-empty">—</div>':`<div class="run-row-progress"><span class="run-progress-text">${p.done}/${p.total}</span><div class="run-progress tone-${runStatusTone(r)}"><i style="width:${p.pct}%"></i></div></div>`;
   const time=group?'<span class="run-row-time"></span>':`<span class="run-row-time" title="${escapeHTML(runTimingTitle(r))}">${runElapsed(r)}</span>`;
   const actions=`<button type="button" class="run-row-action run-view-btn" data-view-run="${escapeHTML(r.id)}" aria-label="查看详情" title="查看详情">${runIconSlot('eye',15)}</button>${isDeletable?`<button type="button" class="run-row-action run-del-btn" data-delete-run="${escapeHTML(r.id)}" aria-label="删除记录" title="删除记录">${runIconSlot('trash',15)}</button>`:''}`;
-  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot(group?'chat':'workflow',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${r.workflowSnapshot?.generic?'<span class="run-chip">通用</span>':''}${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span>${progress}${time}<div class="run-row-actions">${actions}</div></div>`;
+  const originChip=r.origin?'<span class="run-chip run-chip-temporary" title="临时探索 Run：不进入正式交付与统计">临时 Run</span>':'<span class="run-chip run-chip-formal" title="正式 Work Item 运行">正式</span>';
+  return `<div class="run-card run-row ${state.selectedRun===r.id?'active':''}" data-id="${escapeHTML(r.id)}" role="listitem" tabindex="0">${runIconSlot(group?'chat':'workflow',15,'run-glyph')}<div class="run-row-main"><b class="run-row-title" title="${escapeHTML(title)}">${escapeHTML(title)}</b><div class="run-row-meta">${originChip}${r.workflowSnapshot?.generic?'<span class="run-chip">通用</span>':''}${meta}</div></div><span class="run-row-status">${runStatusBadgeHTML(r)}</span>${progress}${time}<div class="run-row-actions">${actions}</div></div>`;
 }
 function renderRunFilterCounts(base){
   const counts=Object.fromEntries(RUN_FILTER_KEYS.map(k=>[k,0]));
@@ -313,7 +314,12 @@ function renderRunFilterCounts(base){
 }
 function renderRuns(){
   renderRunOverview();const workflows=catalogWorkflows();$('#runWorkflowFilter').innerHTML='<option value="">全部 SOP</option>'+workflows.map(w=>`<option value="${escapeHTML(w.id)}" ${state.runWorkflowFilter===w.id?'selected':''}>${escapeHTML(w.name)}</option>`).join('');
-  let base=sortRunsDescending(scopedRuns(sopRuns(state.data.runs)));
+  // Formal runs are SOP runs. Temporary exploration runs are surfaced here too
+  // (they are excluded from SOP counts and analytics) so history stays visible.
+  const originRuns=(state.data.runs||[]).filter(r=>!!r.origin||isSOPRun(r));
+  let base=sortRunsDescending(scopedRuns(originRuns));
+  if(state.runOriginFilter==='temporary')base=base.filter(r=>!!r.origin);
+  else if(state.runOriginFilter==='formal')base=base.filter(r=>!r.origin);
   if(state.runWorkflowFilter)base=base.filter(r=>r.workflowId===state.runWorkflowFilter);
   if(state.runQuery)base=base.filter(r=>{const ctx=runContext(r);return `${r.id} ${r.input} ${r.workflowSnapshot?.name||''} ${ctx.issue?.title||''}`.toLowerCase().includes(state.runQuery)});
   renderRunFilterCounts(base);
@@ -321,7 +327,7 @@ function renderRuns(){
   $('#runListCount')&&($('#runListCount').textContent=`${runs.length} 条`);const list=$('#runList');
   const focusedRow=document.activeElement?.closest?.('#runList .run-card'),focusedPart=focusedRow&&['.run-view-btn','.run-del-btn'].find(s=>document.activeElement.matches(s));
   const pagedRuns=paginateList('runs', runs);
-  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到需求列表查看对应需求的执行结果。</p></div>`;
+  list.innerHTML=pagedRuns.items.map(r=>runRowHTML(r,workflows)).join('')||`<div class="run-list-empty">${runIconSlot('search',17,'run-glyph')}<b>没有匹配的运行</b><p>换个关键词，或到执行中心查看对应工作项的执行结果。</p></div>`;
   const pager=$('#runPager');
   pager.innerHTML=`<span class="run-total">共 ${runs.length} 条</span>${pagerHTML('runs', pagedRuns)}`;
   hydrateRunIcons($('#runsView'));
@@ -405,7 +411,7 @@ function runHeaderDescription(input, title, expanded) {
     <summary><span class="run-header-copy">${escapeHTML(text)}</span><span class="run-description-more">展开全文</span><span class="run-description-less">收起全文</span></summary>
   </details>`;
 }
-function runStatus(s){return ({queued:'排队中',running:'运行中',waiting:'待确认',paused:'已暂停',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[s]||s)}
+function runStatus(s){return ({queued:'排队中',running:'运行中',waiting:'待确认',succeeded:'已完成',failed:'失败',cancelled:'已取消'}[s]||s)}
 function runControlSignature(r){return `${r?.status||''}:${Boolean(r?.pauseRequested)}:${Boolean(r?.cancelRequested)}:${r?.admissionState||''}`}
 function runControlToast(run,message){return run?.status==='queued'?'已进入项目排队，获得名额后自动启动':run?.status==='running'?message:`当前状态：${runDisplayStatus(run)}`}
 async function syncRunControlState(runId){
@@ -417,10 +423,10 @@ async function syncRunControlState(runId){
   paintRunControl(runId);
   return run;
 }
-function runDisplayStatus(r){return (r?.pauseRequested||r?.status==='paused')?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
+function runDisplayStatus(r){return r?.pauseRequested?'已暂停':r?.kind==='workspace'?'对话工作区':runStatus(r?.status)}
 // Only SOP waiting states require confirmation; workspaces and retired groups do not.
 function runAwaitsConfirmation(r){return r?.kind!=='workspace'&&!runIsGroupMode(r)&&r?.status==='waiting'&&!r?.pauseRequested}
-function runDisplayStatusClass(r){return (r?.pauseRequested||r?.status==='paused')?'paused':(r?.status||'')}
+function runDisplayStatusClass(r){return r?.pauseRequested?'paused':(r?.status||'')}
 function formatTokens(n){n=Number(n||0);if(n>=1000000)return `${(n/1000000).toFixed(n<10000000?1:0)}M`;return n>999?`${(n/1000).toFixed(n>9999?0:1)}k`:String(n)}
 function compactTelemetry(events){const out=[];for(const e of events||[]){const last=out[out.length-1];if(last&&last.nodeId===e.nodeId&&last.category===e.category&&last.name===e.name&&['reasoning','output'].includes(e.category)){last.message=(last.message||'')+(e.message||'');last.sequence=e.sequence;last.timestamp=e.timestamp}else out.push({...e})}return out}
 function toolInputHint(input){

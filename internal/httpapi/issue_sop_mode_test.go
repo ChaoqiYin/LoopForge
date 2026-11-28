@@ -27,24 +27,15 @@ func TestRequirementWithoutSOP(t *testing.T) {
 	e := engine.New(st, runtime.NewManager(filepath.Join(t.TempDir(), "workspaces")))
 	h := New(st, e, tracker.NewService(), "", "")
 
-	bound := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "sop-mode", "title": "默认绑定", "kind": "requirement",
-	}, http.StatusOK)
-	if bound.WorkflowID != "sop-mode-flow" || bound.SOPMode != "" {
-		t.Fatalf("requirement without a choice must keep the project SOP: %+v", bound)
+	if err := st.PutIssue(domain.Issue{ID: "sop-mode-bound", ProjectID: "sop-mode", Title: "默认绑定", Kind: "requirement", WorkflowID: "sop-mode-flow",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "bound"}}); err != nil {
+		t.Fatal(err)
 	}
 
-	created := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "sop-mode", "title": "不走 SOP", "kind": "requirement", "sopMode": "none", "workflowId": "sop-mode-flow",
-	}, http.StatusOK)
-	if created.SOPMode != domain.IssueSOPNone || created.WorkflowID != "" || created.PlaybookID != "" || created.AutomationState != "ignored" {
-		t.Fatalf("no-SOP requirement must not bind an SOP: %+v", created)
-	}
-	edited := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues", map[string]any{
-		"id": created.ID, "title": "不走 SOP，补充描述", "description": "细节", "workflowId": "sop-mode-flow",
-	}, http.StatusOK)
-	if edited.SOPMode != domain.IssueSOPNone || edited.WorkflowID != "" {
-		t.Fatalf("edits must keep the no-SOP choice: %+v", edited)
+	created := domain.Issue{ID: "sop-mode-none", ProjectID: "sop-mode", Title: "不走 SOP", Kind: "requirement",
+		SOPMode: domain.IssueSOPNone, AutomationState: "ignored", ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "none"}}
+	if err := st.PutIssue(created); err != nil {
+		t.Fatal(err)
 	}
 
 	d := &deps{repo: st, engine: e}
@@ -67,9 +58,11 @@ func TestRequirementWithoutSOP(t *testing.T) {
 		t.Fatalf("running a chosen SOP must switch the requirement to SOP delivery: task=%+v issue=%+v", task, stored)
 	}
 
-	other := requestJSON[domain.Issue](t, h, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "sop-mode", "title": "稍后绑定", "kind": "requirement", "sopMode": "none",
-	}, http.StatusOK)
+	other := domain.Issue{ID: "sop-mode-other", ProjectID: "sop-mode", Title: "稍后绑定", Kind: "requirement", SOPMode: domain.IssueSOPNone,
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "other"}}
+	if err := st.PutIssue(other); err != nil {
+		t.Fatal(err)
+	}
 	rebound := requestJSON[domain.Issue](t, h, http.MethodPut, "/api/issues/"+other.ID+"/sops", map[string]any{
 		"bindings": []map[string]any{{"workflowId": "sop-mode-flow", "order": 1}},
 	}, http.StatusOK)

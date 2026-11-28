@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestIssueHeadingMenuKeepsLegacyControls(t *testing.T) {
+func TestExecutionCenterHeadingIsReadOnly(t *testing.T) {
 	html, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -27,42 +27,24 @@ func TestIssueHeadingMenuKeepsLegacyControls(t *testing.T) {
 	actions := page[start+actionsStart:]
 	actions = actions[:strings.Index(actions, `<div class="project-context-bar">`)]
 
-	menuStart := strings.Index(actions, `id="issueHeadingMenu"`)
-	if menuStart < 0 {
-		t.Fatal("heading actions are missing #issueHeadingMenu")
-	}
-	menu := actions[menuStart:]
-	menu = menu[:strings.Index(menu, "</div>")]
-	for _, want := range []string{`role="menu"`, `id="openSyncModal"`, `id="syncBadge"`, `id="importGitHubIssues"`, `id="importTAPDIssue"`} {
-		if !strings.Contains(menu, want) {
-			t.Fatalf("#issueHeadingMenu is missing %s", want)
+	for _, want := range []string{`id="refreshIssues"`, `id="executionSystemConfig"`} {
+		if !strings.Contains(actions, want) {
+			t.Fatalf("execution center heading is missing %s", want)
 		}
 	}
-	if got := strings.Count(menu, `role="menuitem"`); got != 3 {
-		t.Fatalf("#issueHeadingMenu should hold 3 menu items, got %d", got)
-	}
-	if !regexp.MustCompile(`id="importTAPDIssue"[^>]*data-legacy-tracker hidden`).MatchString(menu) {
-		t.Fatal("the TAPD import item must stay hidden behind the legacy tracker flag")
-	}
-
-	if strings.Contains(menu, `id="newScheduleJob"`) {
-		t.Fatal("SOP trigger configuration lives in 定时任务 › SOP 触发, not the issue list menu")
-	}
-	if got := strings.Count(page, `id="importTAPDIssue"`); got != 1 {
-		t.Fatalf("the TAPD import must exist once, as the hidden legacy menu item; got %d", got)
-	}
-
-	outside := strings.Replace(actions, menu, "", 1)
-	for _, want := range []string{`id="refreshIssues"`, `id="issueHeadingMore"`, `aria-haspopup="menu"`, `id="newIssue"`} {
-		if !strings.Contains(outside, want) {
-			t.Fatalf("heading actions are missing %s outside the menu", want)
+	for _, gone := range []string{
+		`id="newIssue"`, `id="issueHeadingMore"`, `id="issueHeadingMenu"`,
+		`id="openSyncModal"`, `id="syncBadge"`, `id="importGitHubIssues"`, `id="importTAPDIssue"`,
+	} {
+		if strings.Contains(actions, gone) {
+			t.Fatalf("execution center must not keep the local requirement control %s", gone)
 		}
 	}
-	if got := strings.Count(outside, `class="button primary"`); got != 1 {
-		t.Fatalf("only 新建需求 may be a solid primary button in the heading, got %d", got)
+	if strings.Contains(page, `data-view="issues"`) {
+		t.Fatal("旧需求列表入口必须移除，执行中心使用 executions 视图")
 	}
-	if !strings.Contains(outside, `id="newIssue" class="button primary"`) {
-		t.Fatal("新建需求 must be the solid primary heading button")
+	if !strings.Contains(page, `<h1>执行中心</h1>`) {
+		t.Fatal("issues 视图必须呈现为执行中心")
 	}
 }
 
@@ -74,7 +56,7 @@ func TestIssuesListStylesheetLoadsLast(t *testing.T) {
 	links := regexp.MustCompile(`<link rel="stylesheet" href="([^"?]+)`).FindAllStringSubmatch(string(html), -1)
 	// Page stylesheets that build on the shared --hui-* tokens, and the
 	// .topbar-scoped sheet, may follow it.
-	pageSheets := map[string]bool{"/app/assets-harness.css": true, "/app/sops-harness.css": true, "/app/sop-catalog.css": true, "/app/approvals-harness.css": true, "/app/observability-harness.css": true, "/app/observability-dashboard.css": true, "/app/topbar-harness.css": true, "/app/business-harness.css": true, "/app/requirement-wizard.css": true}
+	pageSheets := map[string]bool{"/app/assets-harness.css": true, "/app/sops-harness.css": true, "/app/sop-catalog.css": true, "/app/approvals-harness.css": true, "/app/external-work.css": true, "/app/observability-harness.css": true, "/app/observability-dashboard.css": true, "/app/topbar-harness.css": true, "/app/business-harness.css": true, "/app/requirement-wizard.css": true}
 	for len(links) > 0 && pageSheets[links[len(links)-1][1]] {
 		links = links[:len(links)-1]
 	}
@@ -141,7 +123,7 @@ func TestIssueSourceFilterOffersPlatformOption(t *testing.T) {
 	}
 	sel := page[start:]
 	sel = sel[:strings.Index(sel, "</select>")]
-	for _, want := range []string{`value=""`, `value="github">GitHub`, `value="local">平台新建`} {
+	for _, want := range []string{`value=""`, `value="feishu_bitable">飞书多维表格`, `value="gongfeng">工蜂`, `value="tapd">TAPD`, `value="local">本地遗留`} {
 		if !strings.Contains(sel, want) {
 			t.Fatalf("#sourceFilter is missing %s: %s", want, sel)
 		}

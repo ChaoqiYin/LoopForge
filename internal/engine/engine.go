@@ -58,6 +58,11 @@ type Engine struct {
 	// work branch. Nil (local/dev) falls back to MR links in run artifacts.
 	FindBranchMR func(projectID, sourceBranch string) (domain.DeliveryMR, bool, error)
 
+	// OnDeliveryRecorded receives each Delivery created by a successful run.
+	// The Work Management service uses it to enqueue a delivery-summary
+	// writeback. It must never fail the Run; outbox retries happen elsewhere.
+	OnDeliveryRecorded func(domain.Delivery)
+
 	// FindBranchMRsInto lists the MRs from a work branch into one target
 	// branch with their head commits, for mode=mr gates. Nil cannot verify.
 	FindBranchMRsInto func(domain.BranchMRQuery) ([]domain.DeliveryMR, error)

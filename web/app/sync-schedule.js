@@ -25,10 +25,12 @@ function renderSync(){
   const recentBySource=['github','gongfeng','tapd'].map(source=>recentLogs.find(l=>l.source===source)).filter(Boolean);
   const scopedFails=recentBySource.filter(l=>l.status==='failed');
   const badge=$('#syncBadge');
-  if(syncing){badge.className='sync-badge live';badge.textContent='同步中'}
-  else if(scopedFails.length){badge.className='sync-badge failed';badge.textContent='同步失败'}
-  else if(scopedLogs.some(l=>l.status==='success')||cfg.lastSyncStatus==='success'){badge.className='sync-badge success';badge.textContent='已同步'}
-  else{badge.className='sync-badge live';badge.textContent='未配置'}
+  if(badge){
+    if(syncing){badge.className='sync-badge live';badge.textContent='同步中'}
+    else if(scopedFails.length){badge.className='sync-badge failed';badge.textContent='同步失败'}
+    else if(scopedLogs.some(l=>l.status==='success')||cfg.lastSyncStatus==='success'){badge.className='sync-badge success';badge.textContent='已同步'}
+    else{badge.className='sync-badge live';badge.textContent='未配置'}
+  }
   const more=$('#issueHeadingMore');
   if(more){const failed=!syncing&&scopedFails.length>0;more.classList.toggle('has-alert',failed);more.title=failed?'外部同步失败':''}
   const latestBySource=['github','gongfeng','tapd'].map(source=>scopedLogs.find(l=>l.source===source)).filter(Boolean);
@@ -809,7 +811,7 @@ async function deleteScheduleJob(id){
     resetScheduleJobForm();renderScheduleJobs();toast(`${label}已删除`);
   }catch(err){toast(err.message)}
 }
-async function refreshSyncStatus(){try{const wasSyncing=!!state.data.syncing,[status,jobs]=await Promise.all([api('/api/sync/status',{silent:true}),api('/api/schedule-jobs',{silent:true})]);state.data.syncLogs=status.logs||[];state.data.syncing=status.syncing||false;state.data.syncConfig=status.config||state.data.syncConfig;state.data.scheduleJobs=jobs||[];renderSync();if(wasSyncing&&!state.data.syncing)await refreshIssues()}catch(e){if(!state.data.syncing)$('#syncBadge').textContent='连接异常'}}
+async function refreshSyncStatus(){try{const wasSyncing=!!state.data.syncing,[status,jobs]=await Promise.all([api('/api/sync/status',{silent:true}),api('/api/schedule-jobs',{silent:true})]);state.data.syncLogs=status.logs||[];state.data.syncing=status.syncing||false;state.data.syncConfig=status.config||state.data.syncConfig;state.data.scheduleJobs=jobs||[];renderSync();if(wasSyncing&&!state.data.syncing)await refreshIssues()}catch(e){if(!state.data.syncing){const badge=$('#syncBadge');if(badge)badge.textContent='连接异常'}}}
 async function syncNow(){try{$('#syncNowBtn').textContent='⟳ 同步中…';$('#syncNowBtn').disabled=true;state.data.syncing=true;renderSync();await api('/api/sync/now',{method:'POST',body:'{}'});toast('同步已启动…');let attempts=0,checking=false;const poll=setInterval(async()=>{if(checking)return;checking=true;attempts++;try{const status=await api('/api/sync/status');state.data.syncLogs=status.logs||[];state.data.syncing=status.syncing||false;state.data.syncConfig=status.config||state.data.syncConfig;if(!state.data.syncing){clearInterval(poll);const issues=await api('/api/issues');state.data.issues=issues;renderIssues();renderSync();const scoped=state.data.syncLogs.filter(l=>!state.projectFilter||!l.projectId||l.projectId===state.projectFilter);const failed=['github','gongfeng','tapd'].map(source=>scoped.find(l=>l.source===source)).filter(l=>l&&l.status==='failed');toast(failed.length?`同步未完全成功：${failed.map(l=>l.source==='github'?'GitHub':l.source==='gongfeng'?'工蜂':'TAPD').join('、')}，详见诊断`:`同步完成：已刷新外部工作项`)}else if(attempts>=80){clearInterval(poll);renderSync();toast('同步仍在后台执行，可稍后查看结果')}}catch(e){if(attempts>=80){clearInterval(poll);state.data.syncing=false;renderSync();toast(`同步状态检查失败：${e.message}`)}}finally{checking=false}},1500)}catch(e){toast(e.message);state.data.syncing=false;renderSync()}}
 async function saveSyncConfig(){
   const project=currentProject();

@@ -116,23 +116,27 @@ func GitOnlyRepositoryProvider(provider string) bool {
 }
 
 type Repository struct {
-	ID                         string    `json:"id"`
-	ProjectID                  string    `json:"projectId"`
-	Provider                   string    `json:"provider"`
-	Name                       string    `json:"name"`
-	GongfengProjectID          string    `json:"gongfengProjectId"`
-	WebURL                     string    `json:"webUrl,omitempty"`
-	CloneURL                   string    `json:"cloneUrl,omitempty"`
-	DefaultBranch              string    `json:"defaultBranch"`
-	LocalPath                  string    `json:"localPath,omitempty"`
-	GitToken                   string    `json:"-"` // deprecated; credentials belong to users
-	GitHubCredentialConfigured bool      `json:"-"`
-	PipelineProjectID          int       `json:"pipelineProjectId,omitempty"`
-	PipelineDefID              int       `json:"pipelineDefId,omitempty"`
-	PipelineURLPattern         string    `json:"pipelineUrlPattern,omitempty"`
-	IntegrateBranch            string    `json:"integrateBranch,omitempty"`
-	CreatedAt                  time.Time `json:"createdAt"`
-	UpdatedAt                  time.Time `json:"updatedAt"`
+	ID                         string `json:"id"`
+	ProjectID                  string `json:"projectId"`
+	Provider                   string `json:"provider"`
+	Name                       string `json:"name"`
+	GongfengProjectID          string `json:"gongfengProjectId"`
+	WebURL                     string `json:"webUrl,omitempty"`
+	CloneURL                   string `json:"cloneUrl,omitempty"`
+	DefaultBranch              string `json:"defaultBranch"`
+	LocalPath                  string `json:"localPath,omitempty"`
+	GitToken                   string `json:"-"` // deprecated; credentials belong to users
+	GitHubCredentialConfigured bool   `json:"-"`
+	// ServiceCredentialID references a repository-level encrypted Git service
+	// credential. It is used when an external trigger has no logged-in user;
+	// user-level credentials remain an optional override.
+	ServiceCredentialID string    `json:"serviceCredentialId,omitempty"`
+	PipelineProjectID   int       `json:"pipelineProjectId,omitempty"`
+	PipelineDefID       int       `json:"pipelineDefId,omitempty"`
+	PipelineURLPattern  string    `json:"pipelineUrlPattern,omitempty"`
+	IntegrateBranch     string    `json:"integrateBranch,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 
 	WorkBranchNaming *WorkBranchNaming `json:"workBranchNaming,omitempty"`
 }

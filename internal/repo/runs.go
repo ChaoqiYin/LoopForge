@@ -23,7 +23,7 @@ import (
 
 func runFromRow(row runRow) domain.Run {
 	run := domain.Run{
-		ID: row.ID, Kind: row.Kind, WorkflowID: row.WorkflowID, Status: row.Status, Revision: row.Revision,
+		ID: row.ID, Kind: row.Kind, Origin: row.Origin, WorkflowID: row.WorkflowID, Status: row.Status, Revision: row.Revision,
 		Input: row.Input, ToolCalls: row.ToolCalls,
 		TelemetrySequence: row.TelemetrySequence, LogSequence: row.LogSequence,
 		OwnerInstanceID: row.OwnerInstanceID, Generation: row.Generation,
@@ -65,7 +65,7 @@ func runFromRow(row runRow) domain.Run {
 
 func runRowValues(run domain.Run) map[string]any {
 	return map[string]any{
-		"id": run.ID, "kind": run.Kind, "workflow_id": run.WorkflowID, "status": run.Status, "revision": run.Revision,
+		"id": run.ID, "kind": run.Kind, "origin": run.Origin, "workflow_id": run.WorkflowID, "status": run.Status, "revision": run.Revision,
 		"input": run.Input, "human_context": run.HumanContext,
 		"quota_project_id": strings.TrimSpace(run.ExecutionContext.ProjectID), "quota_parent_run_id": strings.TrimSpace(run.ExecutionContext.ParentRunID),
 		"quota_exempt": run.ConcurrencyExempt, "admission_state": run.AdmissionState, "queue_entered_at": timePtr(run.QueueEnteredAt),
@@ -176,7 +176,7 @@ func (r *RunsRepo) runSummariesFor(filter domain.AnalyticsFilter, issueID string
 	if r.isMySQL() {
 		snapshotExpr = "JSON_OBJECT('id', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.id')), 'name', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.name')), 'collaborationMode', JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.collaborationMode'))) AS snapshot"
 	}
-	if err := q.Select("id", "kind", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
+	if err := q.Select("id", "kind", "origin", "workflow_id", "status", "admission_state", "queue_entered_at", "quota_exempt", "cancel_requested", "pause_requested", "human_context", "revision", "SUBSTR(input, 1, 500) AS input", "repository", "repositories", snapshotExpr, "execution_context", "usage_json", "tool_calls", "telemetry_sequence", "log_sequence", "owner_instance_id", "lease_until", "execution_generation", "workspace_host", "workspace_root", "workspace_cleaned_at", "created_at", "updated_at").
 		Order("created_at DESC, id DESC").
 		Find(&rows).Error; err != nil {
 		return nil, nil, err
@@ -1189,7 +1189,7 @@ func (r *RunsRepo) persistRun(tx *gorm.DB, run domain.Run, current runRow) error
 		err = tx.Table("runs").Create(runRowValues(run)).Error
 	} else {
 		err = upsertColumns(tx, "runs", runRowValues(run), []string{
-			"kind", "workflow_id", "status", "revision", "input", "human_context", "sandbox_id", "repository", "repositories", "snapshot",
+			"kind", "origin", "workflow_id", "status", "revision", "input", "human_context", "sandbox_id", "repository", "repositories", "snapshot",
 			"execution_context", "usage_json", "tool_calls", "telemetry_sequence",
 			"log_sequence", "workspace_cleaned_at", "updated_at", "admission_state", "queue_entered_at", "quota_project_id", "quota_parent_run_id", "quota_exempt", "quota_bucket",
 		})

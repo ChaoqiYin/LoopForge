@@ -28,7 +28,7 @@ func (e *Engine) withSSHKnownHosts(ctx context.Context) context.Context {
 }
 
 func withRepositoryGit(ctx context.Context, repository domain.RepositoryContext) context.Context {
-	if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
+	if gitwork.RepositoryUsesSSH(repository.Provider, repository.CloneURL) {
 		return gitwork.WithSSHRemote(ctx, repository.CloneURL)
 	}
 	return gitwork.WithHTTPRemote(ctx, repository.CloneURL)
@@ -45,7 +45,7 @@ func withRunGitCredentials(ctx context.Context, credentials runtime.RunCredentia
 func sshRepositoryURLs(repositories []domain.RepositoryContext) []string {
 	var urls []string
 	for _, repository := range repositories {
-		if repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(repository.CloneURL) {
+		if gitwork.RepositoryUsesSSH(repository.Provider, repository.CloneURL) {
 			urls = append(urls, repository.CloneURL)
 		}
 	}
@@ -117,6 +117,52 @@ func resolveGitHubToken(s *repo.Store, userID int64) string {
 		}
 	}
 	return ""
+}
+
+// applyRepositoryServiceCredentials overlays repository-level encrypted Git
+// service credentials on the run snapshot. A service credential wins over the
+// matching user-level HTTP host or SSH remote because external triggers may
+// have no logged-in user to borrow credentials from.
+func (e *Engine) applyRepositoryServiceCredentials(credentials *runtime.RunCredentials, repositories []domain.RepositoryContext) {
+	if e == nil || e.repo == nil || credentials == nil {
+		return
+	}
+	for _, rc := range repositories {
+		if strings.TrimSpace(rc.RepositoryID) == "" {
+			continue
+		}
+		repository, ok := e.repo.Repository(rc.RepositoryID)
+		if !ok || strings.TrimSpace(repository.ServiceCredentialID) == "" {
+			continue
+		}
+		credential, ok := e.repo.RepositoryGitCredential(repository.ServiceCredentialID)
+		if !ok {
+			continue
+		}
+		secret, err := e.repo.RepositoryGitCredentialSecret(credential.ID)
+		if err != nil || secret == "" {
+			continue
+		}
+		overlay, ok := gitwork.BuildServiceCredentialOverlay(credential, secret, rc.CloneURL)
+		if !ok {
+			continue
+		}
+		switch {
+		case overlay.HTTP != nil:
+			if credentials.GitHTTPCredentials == nil {
+				credentials.GitHTTPCredentials = map[string]domain.GitHTTPExecutionCredential{}
+			}
+			credentials.GitHTTPCredentials[overlay.HTTP.Host] = *overlay.HTTP
+		case overlay.SSH:
+			if !gitwork.RepositoryUsesSSH(rc.Provider, rc.CloneURL) {
+				continue
+			}
+			if credentials.GitSSHKeys == nil {
+				credentials.GitSSHKeys = map[string]string{}
+			}
+			credentials.GitSSHKeys[overlay.SSHURL] = overlay.SSHKey
+		}
+	}
 }
 
 var (

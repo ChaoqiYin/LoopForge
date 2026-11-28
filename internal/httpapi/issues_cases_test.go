@@ -5,7 +5,6 @@ import (
 	"agentflow/internal/domain"
 	"agentflow/internal/repo"
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +16,10 @@ import (
 
 func TestIssueRouteLifecycleBranches(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
-	issue := domain.Issue{ID: "cvb-issue", ProjectID: "platform", Title: "Coverage issue", Status: "todo", Kind: "requirement", Source: "local"}
+	issue := domain.Issue{
+		ID: "cvb-issue", ProjectID: "platform", Title: "Coverage issue", Status: "todo", Kind: "requirement", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-cvb-issue", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-cvb-issue"},
+	}
 	if err := f.s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}
@@ -314,20 +316,19 @@ func TestIssuesMoreRepositoryWorkflowHelpers(t *testing.T) {
 
 func TestIssuesMoreHTTPValidationAndPaging(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
-	future := time.Now().UTC().Add(10 * time.Minute)
 	cases := []struct {
 		method string
 		path   string
 		body   any
 		want   int
 	}{
-		{http.MethodPost, "/api/issues", "not-an-object", http.StatusBadRequest},
-		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "future", "clarification": map[string]any{"startedAt": future}}, http.StatusBadRequest},
-		{http.MethodPost, "/api/issues", map[string]any{"projectId": "missing", "title": "bad project"}, http.StatusBadRequest},
-		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad user", "assigneeUserId": 999999}, http.StatusBadRequest},
-		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad tapd", "tapdId": "12x"}, http.StatusBadRequest},
-		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad target", "syncTarget": "jira"}, http.StatusBadRequest},
-		{http.MethodPost, "/api/issues", map[string]any{"id": "cvb-more-local", "projectId": "platform", "title": "local", "syncTarget": "local"}, http.StatusOK},
+		{http.MethodPost, "/api/issues", "not-an-object", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "future"}, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/issues", map[string]any{"projectId": "missing", "title": "bad project"}, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad user", "assigneeUserId": 999999}, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad tapd", "tapdId": "12x"}, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/issues", map[string]any{"projectId": "platform", "title": "bad target", "syncTarget": "jira"}, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/issues", map[string]any{"id": "cvb-more-local", "projectId": "platform", "title": "local", "syncTarget": "local"}, http.StatusMethodNotAllowed},
 		{http.MethodPost, "/api/issues/import-tapd", "not-an-object", http.StatusBadRequest},
 		{http.MethodPost, "/api/issues/import-tapd", map[string]any{
 			"projectId": "missing",
@@ -359,8 +360,11 @@ func TestIssuesMoreHTTPValidationAndPaging(t *testing.T) {
 		"id": "cvb-more-edit", "title": "after", "status": "todo", "tapdId": "",
 		"priority": "high", "baseBranch": "",
 	}, true)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("edit = %d: %s", rec.Code, rec.Body.String())
+	}
+	if stored, _ := f.s.Issue("cvb-more-edit"); stored.Title != "before" {
+		t.Fatalf("rejected edit changed the issue: %+v", stored)
 	}
 }
 
@@ -368,12 +372,14 @@ func TestIssuesMoreRouteBranches(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	valid := domain.Issue{
 		ID: "cvb-more-route", ProjectID: "platform", Title: "route", Status: "backlog",
-		Kind: "requirement", Source: "local",
+		Kind: "requirement", Source: "feishu_bitable",
+		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-more-route", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-more-route"},
 		Clarification: domain.ClarificationAssessment{StartedAt: time.Now().UTC().Add(-time.Minute)},
 	}
 	orphan := domain.Issue{ID: "cvb-more-orphan", ProjectID: "missing", Title: "orphan", Kind: "requirement"}
 	retry := domain.Issue{
-		ID: "cvb-more-retry", ProjectID: "platform", Title: "retry", Kind: "requirement", Source: "local",
+		ID: "cvb-more-retry", ProjectID: "platform", Title: "retry", Kind: "requirement", Source: "feishu_bitable",
+		ExternalRef:   &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-more-retry", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-more-retry"},
 		Clarification: domain.ClarificationAssessment{Summary: "saved summary", WriteBackStatus: "failed"},
 	}
 	if err := f.s.PutIssue(valid); err != nil {
@@ -434,26 +440,21 @@ func TestIssuesMoreRouteBranches(t *testing.T) {
 func TestIssuesMoreTrackerCreateAndResync(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
 	f.h = newTAPDImportHandler(t, f.s, t.TempDir(), `{"id":"1010000000777777777","name":"coverage tracker issue","status":"open","data":[{"id":"1010000000777777777","name":"coverage tracker issue","status":"open"}]}`)
-	rec := cvBRequest(t, f, http.MethodPost, "/api/issues", map[string]any{
-		"projectId": "platform", "title": "tracker create", "description": "description",
-		"syncTarget": "tapd",
-	}, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tracker create = %d: %s", rec.Code, rec.Body.String())
+	issue := domain.Issue{
+		ID: "tapd-1010000000777777777", ProjectID: "platform", Title: "coverage tracker issue", Source: "tapd",
+		ExternalRef: &domain.ExternalRef{
+			Source: "tapd", ExternalID: "1010000000777777777", ExternalType: "story",
+			ExternalURL: "https://www.tapd.cn/123/prong/stories/view/1010000000777777777",
+		},
 	}
-	var issue domain.Issue
-	if err := json.Unmarshal(rec.Body.Bytes(), &issue); err != nil || issue.ID == "" {
-		t.Fatalf("decode tracker issue: %+v %v", issue, err)
+	if err := f.s.PutIssue(issue); err != nil {
+		t.Fatalf("seed tracker issue: %v", err)
 	}
-	rec = cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
+	rec := cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{
 		"summary": "tracker clarification", "ready": true,
 	}, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tracker clarification = %d: %s", rec.Code, rec.Body.String())
-	}
-	rec = cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/clarification", map[string]any{"retry": true}, true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tracker write-back retry = %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("legacy TAPD compatibility row must not clarify: %d: %s", rec.Code, rec.Body.String())
 	}
 	rec = cvBRequest(t, f, http.MethodPost, "/api/issues/"+issue.ID+"/resync-tapd", nil, true)
 	if rec.Code != http.StatusOK {
@@ -501,7 +502,10 @@ func TestIssuesMoreClosedStoreErrors(t *testing.T) {
 
 func TestIssuesMoreForcedPersistenceError(t *testing.T) {
 	f := cvBNewHTTPFixture(t)
-	issue := domain.Issue{ID: "cvb-more-write-error", ProjectID: "platform", Title: "write error", Kind: "requirement"}
+	issue := domain.Issue{
+		ID: "cvb-more-write-error", ProjectID: "platform", Title: "write error", Kind: "requirement",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-write-error", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-write-error"},
+	}
 	if err := f.s.PutIssue(issue); err != nil {
 		t.Fatal(err)
 	}

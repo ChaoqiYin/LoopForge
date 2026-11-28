@@ -44,6 +44,7 @@
   <link rel="stylesheet" href="/app/observability-dashboard.css">
   <link rel="stylesheet" href="/app/topbar-harness.css?v=20261030tb1">
   <link rel="stylesheet" href="/app/approvals-harness.css?v=20261030ap1">
+  <link rel="stylesheet" href="/app/external-work.css">
   <style>
     .boot-loader{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:#0a0e16;background:var(--bg,#0a0e16);color:#94a3bd;color:var(--muted,#94a3bd);transition:opacity .18s ease}
     [data-theme=light] .boot-loader{background:#f5f7fb;background:var(--bg,#f5f7fb);color:#475569;color:var(--muted,#475569)}
@@ -75,29 +76,29 @@
   <aside class="platform-rail" id="platformRail" aria-label="全局导航">
     <nav class="rail-nav">
       <span style="display:none">日常工作</span>
-      <!-- 1. AI 工作台 (Codex 风格 Home 房子图标) -->
-      <button class="rail-btn nav" data-view="collaboration" data-tooltip="AI 工作台" aria-label="AI 工作台">
+      <!-- 1. 工作总览 (Codex 风格 Home 房子图标) -->
+      <button class="rail-btn nav" data-view="collaboration" data-tooltip="工作总览" aria-label="工作总览">
         <svg class="agent-icon harness-icon" data-icon="home-start" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3.5 10 7.3-6a1.9 1.9 0 0 1 2.4 0l7.3 6"/><path d="M5.5 8.4v10.1A1.5 1.5 0 0 0 7 20h3v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5h3a1.5 1.5 0 0 0 1.5-1.5V8.4"/></svg>
-        <span class="rail-label">AI 工作台</span>
+        <span class="rail-label">工作总览</span>
       </button>
 
-      <!-- 2. 统计 -->
-      <button class="rail-btn nav" data-view="observability" data-tooltip="统计" aria-label="统计">
-        <svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg>
-        <span class="rail-label">统计</span>
-      </button>
-
-      <!-- 3. 需求列表 -->
-      <button class="rail-btn nav" data-view="issues" data-tooltip="需求列表" aria-label="需求列表">
+      <!-- 2. 执行中心 -->
+      <button class="rail-btn nav" data-view="executions" data-tooltip="执行中心" aria-label="执行中心">
         <svg class="agent-icon harness-icon" data-icon="form" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8h8"/><path class="form-fields" d="M8 12h8M8 16h5"/></svg>
-        <span class="rail-label">需求列表</span>
+        <span class="rail-label">执行中心</span>
       </button>
 
-      <!-- 4. 待我确认 (带审批徽标) -->
-      <button class="rail-btn nav" data-view="approvals" data-tooltip="待我确认" aria-label="待我确认">
+      <!-- 3. 审批中心 (带审批徽标) -->
+      <button class="rail-btn nav" data-view="approvals" data-tooltip="审批中心" aria-label="审批中心">
         <svg class="agent-icon harness-icon" data-icon="gate" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="gate-shield" d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path class="gate-check agent-check-draw" pathLength="1" d="m9 12 2 2 4-4"/></svg>
-        <span class="rail-label">待我确认</span>
+        <span class="rail-label">审批中心</span>
         <span id="approvalNavBadge" class="nav-badge" hidden></span>
+      </button>
+
+      <!-- 4. 统计分析 -->
+      <button class="rail-btn nav" data-view="observability" data-tooltip="统计分析" aria-label="统计分析">
+        <svg class="agent-icon harness-icon" data-icon="chart" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V9"/><path d="M12 17V7"/><path d="M16 17v-5"/></svg>
+        <span class="rail-label">统计分析</span>
       </button>
     </nav>
 
@@ -137,16 +138,19 @@
       <button class="nav management-back" data-jump="collaboration"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="chevron-left" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"/></svg></span><span class="nav-label">返回工作台</span></button>
       <button class="nav" data-view="settings"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">个人配置</span></button>
       <button class="nav" data-view="assistant" aria-label="AI 助手" title="AI 助手"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="sparkles" data-icon-motion="idle" width="15" height="15" aria-hidden="true" focusable="false"></svg></span><span class="nav-label">AI 助手</span></button>
+      <p>外部工作事项</p>
+      <button class="nav" data-view="systemConfig"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="settings" data-icon-motion="idle" width="15" height="15" aria-hidden="true" focusable="false"></svg></span><span class="nav-label">系统配置</span></button>
+      <button class="nav" data-view="repositories"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="git" data-icon-motion="idle" width="15" height="15" aria-hidden="true" focusable="false"></svg></span><span class="nav-label">代码仓库</span></button>
       <p>项目</p>
       <button class="nav" data-view="projects"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="users" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><g class="team-front"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1"/></g><g class="team-back"><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></g></svg></span><span class="nav-label">项目配置</span></button>
       <button class="nav" data-view="bots" aria-label="通道管理" title="通道管理"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="robot" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="8" width="16" height="11" rx="2"/><path class="antenna" d="M12 3v5"/><path class="eyes" d="M8 13h.01M16 13h.01"/><path class="mouth" d="M9 17h6"/></svg></span><span class="nav-label">通道管理</span></button>
       <button class="nav" data-view="projectCredentials"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="key" data-icon-motion="idle" width="15" height="15" aria-hidden="true"></svg></span><span class="nav-label">凭据管理</span></button>
       <p>流程与任务</p>
-      <button class="nav" data-view="sops" data-nav-match="flow"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg></span><span class="nav-label">流程模板</span></button>
+      <button class="nav" data-view="sops" data-nav-match="flow"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="workflow" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="node-a" cx="6" cy="6" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-b" cx="6" cy="18" r="2.2" fill="currentColor" fill-opacity="0"/><circle class="node-c" cx="18" cy="12" r="2.2" fill="currentColor" fill-opacity="0"/><path pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55"/><path class="signal" pathLength="1" d="M8.2 6C12 6 14 8.2 16.45 10.45M8.2 18C12 18 14 15.8 16.45 13.55" opacity="0" stroke-width="2.5"/></svg></span><span class="nav-label">SOP</span></button>
       <button class="nav" data-view="runs"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="runs" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path class="motion-target" d="M10 9l5 3-5 3z"/></svg></span><span class="nav-label">运行记录</span></button>
       <button class="nav" data-view="aiSchedules"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="clock" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nav-label">定时任务</span></button>
       <p>Agent 能力</p>
-      <button class="nav" data-view="agents"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">角色定义</span></button>
+      <button class="nav" data-view="agents"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="user" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle class="head" cx="12" cy="8" r="4"/><path class="body" d="M4 21a8 8 0 0 1 16 0"/></svg></span><span class="nav-label">Agent</span></button>
       <button class="nav" data-view="mcp" data-nav-match="rules skills" data-nav-icon="skills"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="skills" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path class="skill-piece" d="M9 4V3a2 2 0 0 1 4 0v1h5a2 2 0 0 1 2 2v4h-1a2 2 0 0 0 0 4h1v4a2 2 0 0 1-2 2h-4v-1a2 2 0 0 0-4 0v1H6a2 2 0 0 1-2-2v-4H3a2 2 0 0 1 0-4h1V6a2 2 0 0 1 2-2h3Z"/></svg></span><span class="nav-label">能力资产</span></button>
       <p>运行环境</p>
       <button class="nav" data-view="runners"><span class="nav-icon"><svg class="agent-icon harness-icon" data-icon="server" data-icon-motion="idle" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01"/><path d="M7 17.5h.01"/></svg></span><span class="nav-label">执行机器</span></button>
@@ -210,12 +214,10 @@
     <!-- 工作台 -->
     <section id="dashboardView" class="view page-view">
       <div class="page-heading dash-heading">
-        <div><p class="eyebrow">日常入口</p><h1>工作总览</h1><p>先处理失败和待确认的需求，再看进行中的和最近结果。</p></div>
+        <div><p class="eyebrow">日常入口</p><h1>工作总览</h1><p>先处理失败和待确认的工作项，再看进行中的和最近结果。</p></div>
         <div class="heading-actions">
           <button id="refreshDashboard" class="button ghost">↻ 刷新</button>
-          <button id="dashImportTAPD" class="button ghost" type="button" data-legacy-tracker hidden>导入 TAPD</button>
-          <button id="dashNewRequirement" class="button primary">＋ 新建需求</button>
-          <button id="dashNewRun" class="button ghost">打开需求列表</button>
+          <button id="dashNewRun" class="button ghost">打开执行中心</button>
         </div>
       </div>
       <div id="dashStats" class="stat-grid"></div>
@@ -295,42 +297,27 @@
     </section>
 
     <!-- 需求与 Issue -->
-    <section id="issuesView" class="view page-view">
+    <section id="issuesView" class="view page-view execution-center-view">
       <div class="page-heading issue-heading">
-        <div><p class="eyebrow">需求与缺陷</p><h1>需求列表</h1><p>查看每条需求的执行结果。失败的点进去看卡在哪，再决定重试或修改。</p></div>
+        <div><p class="eyebrow">外部工作事项</p><h1>执行中心</h1><p>外部平台维护标题与业务状态，LoopForge 展示执行状态、当前 SOP / Agent 与最近运行。工作项只读，内容修改请回到外部平台。</p></div>
         <div class="heading-actions issue-heading-actions">
           <button id="refreshIssues" class="button ghost hui-icon-button" type="button" aria-label="刷新" title="刷新"><svg class="agent-icon harness-icon" data-icon="refresh" width="16" height="16" aria-hidden="true" focusable="false"></svg></button>
-          <div class="hui-menu-anchor">
-            <button id="issueHeadingMore" class="button ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="issueHeadingMenu">更多<svg class="agent-icon harness-icon hui-menu-chevron" data-icon="chevron-down" width="14" height="14" aria-hidden="true" focusable="false"></svg><i class="hui-alert-dot" aria-hidden="true"></i></button>
-            <div id="issueHeadingMenu" class="hui-menu" role="menu" aria-labelledby="issueHeadingMore" inert>
-              <button id="openSyncModal" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="swap" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">外部同步</span><span class="hui-menu-meta"><span id="syncBadge" class="sync-badge live">未配置</span></span></button>
-              <span class="hui-menu-sep" role="separator"></span>
-              <button id="importGitHubIssues" class="hui-menu-item" type="button" role="menuitem" tabindex="-1"><svg class="agent-icon harness-icon" data-icon="download" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">同步 GitHub</span></button>
-              <button id="importTAPDIssue" class="hui-menu-item" type="button" role="menuitem" tabindex="-1" data-legacy-tracker hidden><svg class="agent-icon harness-icon" data-icon="download" width="16" height="16" aria-hidden="true" focusable="false"></svg><span class="hui-menu-label">导入 TAPD</span></button>
-            </div>
-          </div>
-          <button id="newIssue" class="button primary" type="button"><svg class="agent-icon harness-icon" data-icon="plus" width="16" height="16" aria-hidden="true" focusable="false"></svg>新建需求</button>
+          <button id="executionSystemConfig" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="settings" width="16" height="16" aria-hidden="true" focusable="false"></svg>连接与映射</button>
         </div>
       </div>
 
       <div class="project-context-bar">
-        <div class="project-context-main"><span id="projectContextMark" class="project-context-mark">P</span><div><small>当前项目</small><b id="projectContextName">选择项目</b><p id="projectContextDescription">在顶栏切换项目：需求、模板、角色、运行和用量会按项目切换</p></div></div>
+        <div class="project-context-main"><span id="projectContextMark" class="project-context-mark">P</span><div><small>当前项目</small><b id="projectContextName">选择项目</b><p id="projectContextDescription">在顶栏切换项目：外部工作事项、模板、角色、运行和用量会按项目切换</p></div></div>
         <div id="projectContextMetrics" class="project-context-metrics"></div>
       </div>
 
       <div class="issue-toolbar">
-        <div class="issue-search"><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="issueSearch" type="search" placeholder="模糊搜索标题，也可搜索编号、描述或外部 ID"></div>
-        <select id="issueStatusFilter" class="select"><option value="">全部状态</option><option value="backlog">待规划</option><option value="todo">待处理 / 待执行</option><option value="in_progress">进行中</option><option value="in_review">评审中</option><option value="done">已完成</option><option value="closed">已关闭</option><option value="blocked">已阻塞</option><option value="cancelled">已取消</option></select>
-        <select id="issueAssigneeFilter" class="select"><option value="">全部责任人</option><option value="unassigned">未指定责任人</option></select>
-        <select id="issueRunFilter" class="select"><option value="">全部执行情况</option><option value="not_started">尚未执行</option><option value="active">正在推进</option><option value="attention">需要介入</option><option value="mr">待处理 PR</option><option value="closed">已闭环</option></select>
-        <select id="sourceFilter" class="select"><option value="">全部来源</option><option value="github">GitHub</option><option value="local">平台新建</option></select>
-        <button id="startIssueSelection" class="button ghost small" type="button"><svg class="agent-icon harness-icon" data-icon="check" width="14" height="14" aria-hidden="true" focusable="false"></svg>批量操作</button>
-        <div class="issue-view-toggle" role="group" aria-label="视图切换">
-          <button type="button" data-issue-view="table" class="active"><svg class="agent-icon harness-icon" data-icon="menu" width="14" height="14" aria-hidden="true" focusable="false"></svg>列表</button>
-          <button type="button" data-issue-view="kanban"><svg class="agent-icon harness-icon" data-icon="board" width="14" height="14" aria-hidden="true" focusable="false"></svg>看板</button>
-        </div>
+        <div class="issue-search"><svg class="agent-icon harness-icon" data-icon="search" width="14" height="14" aria-hidden="true" focusable="false"></svg><input id="issueSearch" type="search" placeholder="搜索外部标题、业务编号或外部记录 ID"></div>
+        <select id="issueStatusFilter" class="select" aria-label="按外部业务状态筛选"><option value="">全部外部状态</option></select>
+        <select id="issueAssigneeFilter" class="select" aria-label="按外部负责人筛选"><option value="">全部外部负责人</option><option value="unassigned">未指定负责人</option></select>
+        <select id="issueRunFilter" class="select" aria-label="按内部执行状态筛选"><option value="">全部执行状态</option><option value="not_started">尚未执行</option><option value="active">正在执行</option><option value="waiting">等待门禁</option><option value="paused">已暂停</option><option value="succeeded">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select>
+        <select id="sourceFilter" class="select" aria-label="按来源筛选"><option value="">全部来源</option><option value="feishu_bitable">飞书多维表格</option><option value="gongfeng">工蜂</option><option value="tapd">TAPD</option><option value="local">本地遗留</option></select>
       </div>
-      <div id="issueBulkActions" class="issue-bulk-actions" hidden></div>
       <div id="issueBoard" class="issue-board"></div>
     </section>
 
@@ -359,7 +346,8 @@
         <div class="run-panel-head">
           <div id="runFilters" class="run-filters" role="tablist" aria-label="按状态筛选"><button type="button" class="active" data-run-filter="all">全部<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="active">进行中<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="queued">排队中<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="paused">已暂停<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="waiting">待确认<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="succeeded">已完成<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="failed">失败<span class="sliding-tab-count">0</span></button><button type="button" data-run-filter="cancelled">已取消<span class="sliding-tab-count">0</span></button></div>
           <div class="run-tools">
-            <label class="run-search"><span data-run-icon="search" aria-hidden="true"><svg width="14" height="14"></svg></span><input id="runSearch" type="search" placeholder="搜索需求标题或 SOP" aria-label="搜索需求标题或 SOP"></label>
+            <label class="run-search"><span data-run-icon="search" aria-hidden="true"><svg width="14" height="14"></svg></span><input id="runSearch" type="search" placeholder="搜索工作项标题或 SOP" aria-label="搜索工作项标题或 SOP"></label>
+            <span class="run-select"><select id="runOriginFilter" aria-label="按 Run 来源筛选"><option value="all">正式与临时 Run</option><option value="formal">仅正式 Run</option><option value="temporary">仅临时 Run</option></select><span data-run-icon="chevron-down" aria-hidden="true"><svg width="14" height="14"></svg></span></span>
             <span class="run-select"><select id="runWorkflowFilter" aria-label="按 SOP 筛选"><option value="">全部 SOP</option></select><span data-run-icon="chevron-down" aria-hidden="true"><svg width="14" height="14"></svg></span></span>
           </div>
         </div>
@@ -373,17 +361,21 @@
       </div>
     </section>
 
-    <!-- 待我处理 -->
+    <!-- 审批中心（只读） -->
     <section id="approvalsView" class="view page-view">
       <div class="page-heading approvals-heading">
-        <div><p class="eyebrow">需要拍板</p><h1>待我确认</h1><p>流程跑到人工确认节点时会停在这里。你批准后继续，退回则按 SOP 返工。</p></div>
+        <div><p class="eyebrow">只读视图</p><h1>审批中心</h1><p>业务审批在外部平台完成，这里只展示外部待审批事项与 LoopForge 内部执行门禁；不提供审批操作。</p></div>
         <div class="heading-actions">
           <span class="live-state" id="approvalLiveState" title="列表不会自动刷新，点右侧按钮获取最新"><i></i> <span data-updated>未加载</span></span>
           <button id="refreshApprovals" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true" focusable="false"></svg>刷新</button>
         </div>
       </div>
       <div id="approvalStats" class="approval-stats"></div>
-      <div id="approvalBatch" class="approval-batch" hidden></div>
+      <div id="externalApprovalPanel" class="approval-external-panel">
+        <div class="approval-external-head"><b>外部待审批</b><span>由外部管理工作台决定；点标题跳回外部记录处理</span></div>
+        <div id="externalApprovalList" class="approval-external-list"></div>
+      </div>
+      <div class="approval-external-head approval-gate-head"><b>内部执行门禁</b><span>只读展示；需要在运行详情里处理的执行检查点</span></div>
       <div id="approvalList" class="approval-list"></div>
     </section>
 
@@ -693,6 +685,33 @@
         </div>
       </header>
       <div id="projectCredentialsContent" class="project-credential-shell" aria-live="polite"></div>
+    </section>
+
+    <!-- 系统配置：外部工作事项连接、自检、映射与同步 -->
+    <section id="systemConfigView" class="view page-view">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">外部工作事项</p>
+          <h1>系统配置</h1>
+          <p>配置唯一的飞书多维表格连接、字段与状态映射，并在此自检或立即同步。允许回写默认关闭。</p>
+        </div>
+      </header>
+      <div id="systemConfigContent" class="wm-shell" aria-live="polite"></div>
+    </section>
+
+    <!-- 代码仓库：服务凭证、默认分支与关联项目 -->
+    <section id="repositoriesView" class="view page-view">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">交付基础设施</p>
+          <h1>代码仓库</h1>
+          <p>为当前项目的代码仓库配置加密服务凭证、默认分支与关联项目；执行时优先使用仓库级凭证。</p>
+        </div>
+        <div class="heading-actions">
+          <button id="refreshRepositories" class="button ghost" type="button"><svg class="agent-icon harness-icon" data-icon="refresh" width="14" height="14" aria-hidden="true" focusable="false"></svg>刷新</button>
+        </div>
+      </header>
+      <div id="repositoriesContent" class="repo-config-shell" aria-live="polite"></div>
     </section>
 
     <!-- 能力资产 · MCP -->
@@ -1408,6 +1427,8 @@
   <script src="/app/observability.js"></script>
   <script src="/app/observability-dashboard.js"></script>
   <script src="/app/issue-drawer.js"></script>
+  <script src="/app/system-config.js"></script>
+  <script src="/app/repositories.js"></script>
   <script src="/app/revisions.js"></script>
   <script src="/app/harness-motion.js"></script>
   <script src="/app/hover-ink.js"></script>

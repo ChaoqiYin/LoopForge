@@ -13,9 +13,9 @@ import (
 )
 
 // TestRoomDispatchTargetReachesIssueAndCards pins the two callers of
-// roomDispatchTarget: the issue's create operation and every dispatch card must
-// carry the same multi-SOP target, keyed by the first SOP, and a single-SOP
-// dispatch onto an existing issue must stay an "sop" target.
+// roomDispatchTarget: every dispatch card must carry the same multi-SOP
+// target, keyed by the first SOP, and a single-SOP dispatch onto an existing
+// Work Item must stay an "sop" target.
 func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 	t.Setenv("AGENTFLOW_SESSION_SECRET", "room-test-session-secret")
 	root := t.TempDir()
@@ -35,6 +35,12 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := s.PutIssue(domain.Issue{
+		ID: "room-target-issue", ProjectID: "platform", Title: "三条流程并行", Status: "todo", WorkflowID: "target-build", Source: "feishu_bitable",
+		ExternalRef: &domain.ExternalRef{Source: "feishu_bitable", ExternalID: "rec-room-target", ConnectionID: "conn-1", TableID: "tbl-1", BusinessKey: "rec-room-target"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	e := engine.New(s, runtime.NewManager(filepath.Join(root, "workspaces")))
 	h := New(s, e, tracker.NewService(), "", "")
 	owner, _ := s.User(1)
@@ -50,18 +56,23 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 
 	const multiName = "SOP「构建」、「评审」、「上线」"
 	multi := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
-		"title": "三条流程并行", "workflowIds": []string{"target-build", "target-review", "target-ship"},
+		"issueId": "room-target-issue", "workflowIds": []string{"target-build", "target-review", "target-ship"},
 	}, http.StatusCreated)
 	cancelRuns(multi)
-	if multi.Issue.WorkflowID != "target-build" {
-		t.Fatalf("new issue should bind the first SOP: %q", multi.Issue.WorkflowID)
+	if multi.Issue.ID != "room-target-issue" || multi.Issue.WorkflowID != "target-build" {
+		t.Fatalf("dispatch should reuse the synced Work Item: %+v", multi.Issue)
 	}
 	stored, ok := s.Issue(multi.Issue.ID)
-	if !ok || len(stored.Operations) == 0 {
-		t.Fatalf("issue should be stored with operations: %+v %v", stored, ok)
+	if !ok || len(stored.Operations) != 3 {
+		t.Fatalf("issue should record one dispatch per SOP: %+v %v", stored, ok)
 	}
-	if create := stored.Operations[0]; create.Action != "create" || create.Detail != "从协作群「派发目标群」建单，派给"+multiName {
-		t.Fatalf("create operation should name every SOP: %+v", create)
+	for i, op := range stored.Operations {
+		if op.Action != "dispatch" {
+			t.Fatalf("operation %d = %+v", i, op)
+		}
+	}
+	if stored.Operations[0].Detail != "协作群派发 SOP「构建」" || stored.Operations[2].Detail != "协作群派发 SOP「上线」" {
+		t.Fatalf("dispatch operations should name their own SOP: %+v", stored.Operations)
 	}
 	if len(multi.Messages) != 3 {
 		t.Fatalf("one dispatch card per SOP: %+v", multi.Messages)
@@ -72,8 +83,8 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 		}
 	}
 
-	// Dispatching onto the existing issue skips the create operation but the
-	// cards still describe the target the same way.
+	// Dispatching again records more dispatch operations and the cards still
+	// describe the target the same way.
 	again := requestJSONAuthed[roomIssueResult](t, h, owner, http.MethodPost, "/api/rooms/"+room.ID+"/issues", map[string]any{
 		"issueId": multi.Issue.ID, "workflowIds": []string{"target-ship", "target-review"},
 	}, http.StatusCreated)
@@ -100,7 +111,7 @@ func TestRoomDispatchTargetReachesIssueAndCards(t *testing.T) {
 			creates++
 		}
 	}
-	if creates != 1 {
-		t.Fatalf("dispatching onto an existing issue must not add create operations: %+v", latest.Operations)
+	if creates != 0 {
+		t.Fatalf("room dispatch must not create local issues: %+v", latest.Operations)
 	}
 }

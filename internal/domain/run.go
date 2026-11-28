@@ -7,9 +7,17 @@ import (
 	"time"
 )
 
+// RunOriginAssistantScratch marks an exploration run started in the AI
+// workbench without a Work Item. Runs with an empty Origin belong to the
+// formal work-item flow.
+const RunOriginAssistantScratch = "assistant_scratch"
+
 type Run struct {
-	Kind               string             `json:"kind,omitempty"`
-	ID                 string             `json:"id"`
+	Kind string `json:"kind,omitempty"`
+	ID   string `json:"id"`
+	// Origin marks runs started outside a Work Item (for example
+	// RunOriginAssistantScratch). Empty means the formal work-item flow.
+	Origin             string             `json:"origin,omitempty"`
 	WorkflowID         string             `json:"workflowId"`
 	WorkflowSnapshot   WorkflowDefinition `json:"workflowSnapshot"`
 	SandboxID          string             `json:"sandboxId,omitempty"`
@@ -60,6 +68,13 @@ const ConversationWorkspaceWorkflowID = "conversation-workspace"
 
 // IsWorkspace distinguishes an on-demand chat workspace from a scheduled SOP.
 func (r Run) IsWorkspace() bool { return r.Kind == RunKindWorkspace }
+
+// IsTemporary reports a run started outside a Work Item. Temporary runs are
+// excluded from formal delivery and execution statistics.
+func (r Run) IsTemporary() bool { return strings.TrimSpace(r.Origin) != "" }
+
+// IsFormal reports a run that belongs to the formal work-item flow.
+func (r Run) IsFormal() bool { return !r.IsTemporary() }
 
 // FailedBeforeAutoAssignment reports whether a project-auto run failed while waiting for a machine.
 func (r Run) FailedBeforeAutoAssignment() bool {

@@ -161,13 +161,10 @@ func (h *assistantHandlers) callAssistantPlatform(ctx context.Context, user doma
 			return "", fmt.Errorf("只能操作当前会话绑定的任务")
 		}
 	}
-	if op.Name == "issues_save" || op.Name == "issues_import_tapd" {
+	if op.Name == "issues_import_tapd" {
 		if body, ok := input.Body.(map[string]any); ok {
 			normalizeAssistantIssueBranchBody(body)
 		}
-	}
-	if mode.AutoWrite && op.Name == "issues_save" {
-		input.Body = h.mergeIssueSaveBody(input.Body, input.Path)
 	}
 	// fields=a,b selects result fields for read tools, and ids=a,b keeps only
 	// those items of a list; handlers never see either.

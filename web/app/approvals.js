@@ -504,21 +504,39 @@ function bindApprovalBatch(){
   const reject=host.querySelector('[data-ap-batch-reject]');if(reject)reject.onclick=()=>batchRejectApprovals();
 }
 
-// The decision / paused panels are shared with the issue drawer and run detail, so
-// only the card shell changes here; #approvalsView CSS reorders their buttons.
+// The approval center is a read-only view. Decision panels stay in the issue
+// drawer and run detail, where execution gates are actually handled.
 function approvalCardHTML(r){
   const nodeId=waitingNodeId(r),node=r.workflowSnapshot?.nodes?.find(n=>n.id===nodeId);
   const task=(state.data.tasks||[]).find(t=>t.runId===r.id),issue=task&&(state.data.issues||[]).find(i=>i.id===task.issueId);
   const alignRun=r.workflowId==='scheduled-baseline-align'||r.workflowSnapshot?.id==='scheduled-baseline-align';
   const repoName=r.repository?.name;
   const title=alignRun?(repoName?`${repoName} · 确认对齐基线`:'定时任务 · 确认对齐基线'):issue?.title||r.workflowSnapshot?.name||r.workflowId;
-  const key=alignRun?'定时任务基线':issue?`${(state.data.projects||[]).find(p=>p.id===issue.projectId)?.key||'ISS'}-${issue.number}`:'未关联需求';
+  const key=alignRun?'定时任务基线':issue?`${(state.data.projects||[]).find(p=>p.id===issue.projectId)?.key||'ISS'}-${issue.number}`:'未关联工作项';
   const keyHTML=issue&&!alignRun?`<code class="ap-key">${escapeHTML(key)}</code>`:`<span class="ap-key">${escapeHTML(key)}</span>`;
   const sep='<span class="ap-sep" aria-hidden="true">·</span>';
-  const sideButton=issue?`<button class="button ghost small" data-open-issue="${escapeHTML(issue.id)}">打开需求</button>`:`<button class="button ghost small" data-open-logs="${escapeHTML(r.id)}">${alignRun?'查看对齐详情':'排查日志'}</button>`;
-  const more=`<div class="ap-more"><button type="button" class="ap-more-toggle" data-ap-more title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">${huiIcon('more-horizontal')}</button><div class="ap-more-menu" role="menu" hidden><button type="button" class="ap-menu-item danger" role="menuitem" data-cancel-run="${escapeHTML(r.id)}">${huiIcon('close')}<span>取消流程</span></button></div></div>`;
-  const decision=r.pauseRequested?pausedRunPanelHTML(r):humanDecisionPanelHTML(r.id,nodeId,r.nodes?.[nodeId],node,r.workflowSnapshot?.nodes||[],r);
-  return `<div class="ap-card${approvalSelectable(r)&&approvalSelection().has(approvalKey(r.id,waitingNodeId(r)))?' is-selected':''}"><div class="ap-card-head">${approvalSelectBoxHTML(r)}<div class="ap-main"><div class="ap-head"><b>${escapeHTML(title)}</b>${approvalStatusBadgeHTML(r.pauseRequested)}</div><div class="ap-meta">${keyHTML}${sep}${r.pauseRequested?'暂停于':'卡在'}「${escapeHTML(node?.name||nodeId||'确认')}」${sep}已等待 ${relativeTime(r.createdAt)}</div></div><div class="ap-side">${sideButton}${!r.pauseRequested?refreshRunSOPButtonHTML(r):''}${more}</div></div>${decision?`<div class="ap-body">${decision}</div>`:''}</div>`;
+  const sideButton=issue?`<button class="button ghost small" data-open-issue="${escapeHTML(issue.id)}">执行详情</button>`:`<button class="button ghost small" data-open-logs="${escapeHTML(r.id)}">${alignRun?'查看对齐详情':'排查日志'}</button>`;
+  const sections=humanGateSectionsHTML(r.nodes?.[nodeId],r,node);
+  return `<div class="ap-card ap-card-readonly"><div class="ap-card-head"><div class="ap-main"><div class="ap-head"><b>${escapeHTML(title)}</b>${approvalStatusBadgeHTML(r.pauseRequested)}<span class="hui-badge" data-size="sm" data-tone="neutral"><span class="hui-badge-label">只读</span></span></div><div class="ap-meta">${keyHTML}${sep}${r.pauseRequested?'暂停于':'卡在'}「${escapeHTML(node?.name||nodeId||'确认')}」${sep}已等待 ${relativeTime(r.createdAt)}${sep}<span class="approval-readonly-note">内部执行门禁，请在运行详情处理</span></div></div><div class="ap-side">${sideButton}</div></div>${sections?`<div class="ap-body approval-readonly-body">${sections}</div>`:''}</div>`;
+}
+
+function externalApprovalItems(){
+  // The status mapping's explicit awaitingApproval marker is the only source
+  // of truth. Status strings are business vocabulary and must not be guessed.
+  return (state.data.issues||[]).filter(issue=>issue?.externalRef?.awaitingApproval===true);
+}
+
+function externalApprovalRow(issue){
+  const rawURL=workItemExternalURL(issue);
+  const url=rawURL?safeURL(rawURL):'';
+  const key=workItemExternalKey(issue)||issue.id;
+  const title=url?`<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(issue.title||key)}</a>`:`<b>${escapeHTML(issue.title||key)}</b>`;
+  const external=url?`<a class="button ghost small" href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" data-external-link>去外部平台处理</a>`:'';
+  return `<div class="external-approval-row" data-id="${escapeHTML(issue.id)}">
+    <div class="external-approval-main"><div class="external-approval-title">${title}</div><div class="external-approval-meta"><code>${escapeHTML(key)}</code><span>${escapeHTML(workItemSourceLabel(issue))}</span>${issue.externalAssignee?`<span>${escapeHTML(issue.externalAssignee)}</span>`:''}</div></div>
+    <span class="hui-badge" data-size="sm" data-tone="warn"><span class="hui-badge-label">${escapeHTML(workItemExternalState(issue))}</span></span>
+    <div class="external-approval-actions"><button type="button" class="button ghost small" data-open-issue="${escapeHTML(issue.id)}">执行详情</button>${external}</div>
+  </div>`;
 }
 function closeApprovalMoreMenus(except){
   document.querySelectorAll('#approvalsView .ap-more.is-open').forEach(more=>{
@@ -571,16 +589,18 @@ async function renderApprovals(background=false){
   $('#approvalLiveState').classList.toggle('active',items.length>0);
   const updated=$('#approvalLiveState [data-updated]');if(updated)updated.textContent=`更新于 ${new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}`;
   updateApprovalBadge();
-  $('#approvalStats').innerHTML=`<span class="issue-stat"><b>${items.length}</b> 条待确认</span>`;
-  state.approvalItems=items;pruneApprovalSelection(items);
-  const batch=$('#approvalBatch');
-  if(batch){batch.innerHTML=approvalBatchBarHTML(items);batch.hidden=!batch.innerHTML;bindApprovalBatch()}
+  const external=externalApprovalItems();
+  $('#approvalStats').innerHTML=`<span class="issue-stat"><b>${external.length}</b> 条外部待审批</span><span class="issue-stat"><b>${items.length}</b> 条内部执行门禁</span>`;
+  state.approvalItems=items;
+  const batch=$('#approvalBatch');if(batch){batch.innerHTML='';batch.hidden=true}
+  const externalHost=$('#externalApprovalList');
+  if(externalHost){
+    externalHost.innerHTML=external.map(externalApprovalRow).join('')||`<div class="approval-empty approval-external-empty"><div class="empty-box"><span class="ap-empty-icon">${huiIcon('check')}</span><b>没有外部待审批事项</b><p>外部业务审批在管理工作台完成，LoopForge 只同步结果。</p></div></div>`;
+  }
   const host=$('#approvalList');
-  host.innerHTML=items.map(approvalCardHTML).join('')||`<div class="approval-empty"><div class="empty-box"><span class="ap-empty-icon">${huiIcon('check')}</span><b>没有需要你拍板的需求</b><p>流程停在人工确认节点时会出现在这里。</p></div></div>`;
-  host.querySelectorAll('[data-open-issue]').forEach(b=>b.onclick=()=>openIssueDetail(b.dataset.openIssue,'sop'));
+  host.innerHTML=items.map(approvalCardHTML).join('')||`<div class="approval-empty"><div class="empty-box"><span class="ap-empty-icon">${huiIcon('check')}</span><b>没有进行中的内部执行门禁</b><p>SOP 停在人工确认节点时会出现在这里，可在运行详情处理。</p></div></div>`;
+  const bindOpen=(root)=>root?.querySelectorAll('[data-open-issue]').forEach(b=>b.onclick=()=>openIssueDetail(b.dataset.openIssue,'sop'));
+  bindOpen(host);bindOpen(externalHost);
   host.querySelectorAll('[data-open-logs]').forEach(b=>b.onclick=()=>openRunFromId(b.dataset.openLogs,{forceRuns:true}));
-  host.querySelectorAll('[data-cancel-run]').forEach(b=>b.onclick=()=>{closeApprovalMoreMenus();cancelRunFlow(b.dataset.cancelRun)});
-  bindApprovalMoreMenus(host);
-  host.querySelectorAll('[data-ap-select]').forEach(box=>{box.onchange=()=>{const key=approvalKey(box.dataset.apSelect,box.dataset.apNode);if(box.checked)approvalSelection().add(key);else approvalSelection().delete(key);refreshApprovalBatchUI()}});
-  bindWaitingActions(host);
+  bindReviewArtifactActions(host,state.activeRun||{});
 }

@@ -89,7 +89,7 @@ func TestAssistantDraftBoundary(t *testing.T) {
 func assistantBatchJSON(n int) string {
 	items := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		items = append(items, `{"tool":"issues_save","body":{"id":"iss","title":"需求","projectId":"p","repositoryId":"r1"}}`)
+		items = append(items, `{"tool":"agents_save","body":{"id":"a","name":"A","projectId":"p"}}`)
 	}
 	return `{"message":"ok","drafts":[` + strings.Join(items, ",") + `]}`
 }

@@ -397,7 +397,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
 			PreserveCheckout:          run.UsesConversationWorkspace(),
-			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(run.Repository.CloneURL),
+			UseSSH:                    gitwork.RepositoryUsesSSH(run.Repository.Provider, run.Repository.CloneURL),
 		}
 	}
 	for _, rc := range run.RepositoryContexts() {
@@ -413,7 +413,7 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
 			PreserveCheckout:          run.UsesConversationWorkspace(),
-			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH || gitwork.IsSSHReference(rc.CloneURL),
+			UseSSH:                    gitwork.RepositoryUsesSSH(rc.Provider, rc.CloneURL),
 			Dir:                       rc.WorkspaceDir,
 		})
 	}

@@ -47,15 +47,25 @@ type Issue struct {
 	DeliveryMRState    string            `json:"deliveryMrState,omitempty"` // merged (default branch), integrated (baseline), opened, closed, reopened, unknown
 	// DeliveryMRs lists one MR per delivered repository. DeliveryMRURL is its
 	// first entry and DeliveryMRState the aggregate (see SetDeliveryMRs).
-	DeliveryMRs       []DeliveryMR            `json:"deliveryMrs,omitempty"`
-	DeliveryUpdatedAt time.Time               `json:"deliveryUpdatedAt,omitempty"`
-	Kind              string                  `json:"kind,omitempty"` // requirement, issue
-	Clarification     ClarificationAssessment `json:"clarification"`
-	Source            string                  `json:"source,omitempty"` // local, gongfeng, tapd
+	DeliveryMRs       []DeliveryMR `json:"deliveryMrs,omitempty"`
+	DeliveryUpdatedAt time.Time    `json:"deliveryUpdatedAt,omitempty"`
+	Kind              string       `json:"kind,omitempty"` // requirement, issue
+	// AcceptanceCriteria is the externally managed acceptance snapshot used
+	// as Agent input. It is not a local editable requirement field.
+	AcceptanceCriteria string `json:"acceptanceCriteria,omitempty"`
+	// ExternalAssignee is the display-only assignee reported by the external
+	// record. It is never mapped to a LoopForge user.
+	ExternalAssignee string                  `json:"externalAssignee,omitempty"`
+	Clarification    ClarificationAssessment `json:"clarification"`
+	Source           string                  `json:"source,omitempty"` // local, gongfeng, tapd
 	// TapdID is an optional metrics-only link for a platform-created requirement.
 	// It does not create a tracker binding or authorize TAPD write-back.
 	TapdID      string       `json:"tapdId,omitempty"`
 	ExternalRef *ExternalRef `json:"externalRef,omitempty"`
+	// ExternalPendingAction is the status action deferred because the Work
+	// Item already had an active Run. It is applied when a later projection
+	// finds the Work Item idle again; local execution context is preserved.
+	ExternalPendingAction *WorkItemPendingAction `json:"externalPendingAction,omitempty"`
 	// ConversationSessionID is the conversation that identified and created
 	// this requirement while changing code directly, without an SOP.
 	ConversationSessionID string    `json:"conversationSessionId,omitempty"`
@@ -196,13 +206,41 @@ type ExternalRef struct {
 	// SourceContentHash records the last imported body so provider adapters can
 	// distinguish a remote edit from a locally clarified requirement.
 	SourceContentHash string    `json:"sourceContentHash,omitempty"`
-	Source            string    `json:"source"`        // gongfeng, tapd
+	Source            string    `json:"source"`        // gongfeng, tapd, feishu_bitable
 	ExternalID        string    `json:"externalId"`    // gongfeng issue id or tapd story id
 	ExternalIID       int       `json:"externalIid"`   // gongfeng issue iid (for URL)
 	ExternalURL       string    `json:"externalUrl"`   // clickable URL
-	ExternalState     string    `json:"externalState"` // opened/closed for gongfeng, etc.
+	ExternalState     string    `json:"externalState"` // external business status snapshot
 	ExternalType      string    `json:"externalType"`  // issue, story
 	SyncedAt          time.Time `json:"syncedAt"`
+	// ConnectionID, TableID and BusinessKey are the Work Item identity for a
+	// Management Connection. BusinessKey is the authoritative unique key;
+	// RecordID is only the platform's current row reference.
+	ConnectionID string `json:"connectionId,omitempty"`
+	TableID      string `json:"tableId,omitempty"`
+	BusinessKey  string `json:"businessKey,omitempty"`
+	RecordID     string `json:"recordId,omitempty"`
+	// Orphaned marks a record deleted in the external platform. Execution
+	// evidence is kept; automatic trigger stops.
+	Orphaned   bool      `json:"orphaned,omitempty"`
+	OrphanedAt time.Time `json:"orphanedAt,omitempty"`
+	// AwaitingApproval mirrors the status mapping's explicit business-approval
+	// marker for the current external business status. The read-only approval
+	// center filters on this flag; it never guesses from the status string.
+	AwaitingApproval bool `json:"awaitingApproval,omitempty"`
+	// BusinessKeyDegraded marks a record projected without its configured
+	// business key. The record id keeps the binding stable, but the missing key
+	// stays visible to operators and the business key is not authoritative.
+	BusinessKeyDegraded bool `json:"businessKeyDegraded,omitempty"`
+	// StatusHistory keeps the recently observed external business statuses so
+	// a regression (entering a value already seen) can be recorded without
+	// triggering an action. It is capped and never authoritative.
+	StatusHistory []string `json:"statusHistory,omitempty"`
+	// WritebackState is the last status this system wrote back. It lets the
+	// projection recognize its own write when an event arrives, which prevents
+	// a writeback/event loop.
+	WritebackState string    `json:"writebackState,omitempty"`
+	WritebackAt    time.Time `json:"writebackAt,omitempty"`
 	// Imported is set for 导入 TAPD / 新建 TAPD. Iteration sync must not
 	// delete these just because they are outside the current TAPD pool.
 	Imported bool `json:"imported,omitempty"`
@@ -280,6 +318,11 @@ func (i Issue) IdentityBlock() string {
 		return ""
 	}
 	source := strings.ToLower(strings.TrimSpace(i.Source))
+	if source == "" && i.ExternalRef != nil {
+		// Projections carry the same source on the Issue and the ExternalRef;
+		// fall back so an Agent never sees a synced Work Item as local.
+		source = strings.ToLower(strings.TrimSpace(i.ExternalRef.Source))
+	}
 	if source == "" {
 		source = "local"
 	}
@@ -294,6 +337,8 @@ func (i Issue) IdentityBlock() string {
 		b.WriteString("TAPD")
 	case "gongfeng":
 		b.WriteString("工蜂")
+	case "feishu_bitable":
+		b.WriteString("飞书多维表格")
 	default:
 		b.WriteString("本地")
 	}
